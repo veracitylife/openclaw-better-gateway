@@ -403,14 +403,14 @@ better-gateway-dev/
     - [ ] Add chat visibility toggle (⌘/Ctrl+Shift+C) + toolbar button
     - **Acceptance:** panel can be toggled/resized repeatedly with no layout break or lost editor state
 
-12. [ ] **Ticket: Wire chat transport to OpenClaw session stream**
-    - [ ] Connect panel to gateway WebSocket/session channel
-    - [ ] Send user message from panel input
-    - [ ] Stream assistant responses in real time
-    - [ ] Handle reconnect and transient disconnect UI states
+12. [x] **Ticket: Wire chat transport to OpenClaw session stream** ✅ **DONE (2026-02-10)**
+    - [x] Connect panel to gateway WebSocket/session channel
+    - [x] Send user message from panel input
+    - [x] Stream assistant responses in real time
+    - [x] Handle reconnect and transient disconnect UI states
     - **Acceptance:** user can send message and receive streamed response in-panel without page reload
 
-13. [ ] **Ticket: `@file` mention autocomplete + chips**
+13. [ ] **Ticket: `@file` mention autocomplete + chips** **← NEXT**
     - [ ] Type `@` to open file picker from current workspace
     - [ ] Keyboard navigation + enter to select
     - [ ] Selected files shown as removable chips above input
