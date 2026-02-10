@@ -736,7 +736,10 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
     
     function normalizeWorkspaceRoot(path) {
       if (!path || path === '/' || path === '.') return '/';
-      return path.replace(/^\/+|\/+$/g, '');
+      let normalized = String(path).trim();
+      while (normalized.startsWith('/')) normalized = normalized.slice(1);
+      while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+      return normalized || '/';
     }
 
     function getWorkspaceApiPath() {
