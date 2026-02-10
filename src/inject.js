@@ -243,6 +243,23 @@
       }
     });
 
+    // For all other nav items, restore main content before navigation
+    // This ensures the gateway's SPA routing works properly
+    const allNavItems = document.querySelectorAll(".nav-item");
+    allNavItems.forEach(function (navItem) {
+      // Skip Chat and IDE links (handled separately)
+      if (navItem === chatLink || navItem.id === "better-gateway-ide-nav") {
+        return;
+      }
+      
+      navItem.addEventListener("click", function () {
+        if (ideViewActive) {
+          // Restore original content before navigation
+          showChatView();
+        }
+      });
+    });
+
     // Create and insert IDE nav item after Chat
     const ideNavItem = createIdeNavItem();
     navItems.appendChild(ideNavItem);
