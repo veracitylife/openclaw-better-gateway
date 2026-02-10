@@ -13,22 +13,23 @@ interface PluginConfig {
   maxFileSize: number;
 }
 
+// Minimal type for the plugin API we actually use
 interface PluginApi {
   registerHttpHandler: (
-    handler: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> | boolean
   ) => void;
+  registerHttpRoute: (params: {
+    path: string;
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
+  }) => void;
   logger: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
     error: (msg: string) => void;
     debug: (msg: string) => void;
   };
-  dataDir: string;
-  pluginConfig: PluginConfig;
-  config?: {
-    workspace?: string;
-  };
-  resolvePath?: (path: string) => string;
+  pluginConfig?: Record<string, unknown>;
+  resolvePath: (input: string) => string;
 }
 
 const DEFAULT_CONFIG: PluginConfig = {
@@ -187,7 +188,8 @@ ${script}`;
 }
 
 export default {
-  id: "better-gateway",
+  // ID must match openclaw.plugin.json
+  id: "openclaw-better-gateway",
   name: "Better Gateway",
 
   configSchema: {
@@ -220,24 +222,25 @@ export default {
   },
 
   register(api: PluginApi): void {
-    const config = { ...DEFAULT_CONFIG, ...(api.pluginConfig || {}) };
+    const config: PluginConfig = {
+      ...DEFAULT_CONFIG,
+      ...(api.pluginConfig as Partial<PluginConfig> || {}),
+    };
     
     // Resolve workspace directory
-    const workspaceDir = api.resolvePath?.("") || 
-      api.config?.workspace || 
-      process.env.OPENCLAW_WORKSPACE || 
-      process.cwd();
+    const workspaceDir = api.resolvePath("");
     
     api.logger.info(
       `Better Gateway loaded (reconnect: ${config.reconnectIntervalMs}ms, max: ${config.maxReconnectAttempts}, workspace: ${workspaceDir})`
     );
 
     // Create file API handler
-    const handleFileApi = createFileApiHandler({
+    const fileApiHandler = createFileApiHandler({
       workspaceDir,
       maxFileSize: config.maxFileSize,
     });
 
+    // Register the main HTTP handler for /better-gateway/* routes
     api.registerHttpHandler(
       async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
         const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -250,9 +253,10 @@ export default {
         const hostHeader = req.headers.host || "localhost:18789";
         const gatewayHost = `http://${hostHeader}`;
 
-        // Handle file API routes
+        // Handle file API routes FIRST (before proxy catches them)
         if (pathname.startsWith("/better-gateway/api/files")) {
-          return handleFileApi(req, res, pathname);
+          const handled = await fileApiHandler(req, res, pathname);
+          if (handled) return true;
         }
 
         // Serve the inject script
@@ -303,18 +307,19 @@ export default {
           targetPath += url.search;
         }
 
-        const proxyReq = httpRequest(
-          {
-            hostname: "127.0.0.1",
-            port: internalPort,
-            path: targetPath,
-            method: req.method || "GET",
-            family: 4, // Force IPv4
-            headers: {
-              ...req.headers,
-              "Host": "127.0.0.1:18789",
+        return new Promise((resolve) => {
+          const proxyReq = httpRequest(
+            {
+              hostname: "127.0.0.1",
+              port: internalPort,
+              path: targetPath,
+              method: req.method || "GET",
+              family: 4,
+              headers: {
+                ...req.headers,
+                "Host": "127.0.0.1:18789",
+              },
             },
-          },
             (proxyRes) => {
               const contentType = proxyRes.headers["content-type"] || "";
               const chunks: Buffer[] = [];
@@ -323,11 +328,8 @@ export default {
               proxyRes.on("end", () => {
                 let body = Buffer.concat(chunks).toString("utf-8");
 
-                // If it's HTML, inject our script and fix relative URLs
                 if (contentType.includes("text/html")) {
                   const injectTag = `<script>${generateConfigScript(config)}\n${loadInjectScript()}</script>`;
-                  
-                  // Add <base href="/"> to make relative URLs resolve from root
                   const baseTag = `<base href="/">`;
                   
                   if (body.includes("<head>")) {
@@ -351,6 +353,7 @@ export default {
                 res.writeHead(proxyRes.statusCode || 200, headers);
                 res.end(body);
                 api.logger.debug("Served enhanced gateway UI");
+                resolve(true);
               });
             }
           );
@@ -359,10 +362,11 @@ export default {
             api.logger.error(`Proxy error: ${err.message}`);
             res.writeHead(502, { "Content-Type": "text/plain" });
             res.end("Failed to fetch gateway UI");
+            resolve(true);
           });
 
-        proxyReq.end();
-        return true;
+          proxyReq.end();
+        });
       }
     );
   },

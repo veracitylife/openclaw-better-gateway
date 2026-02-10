@@ -22,7 +22,7 @@ import plugin from "./index.js";
 describe("Better Gateway Plugin", () => {
   describe("plugin metadata", () => {
     it("should have correct id", () => {
-      expect(plugin.id).toBe("better-gateway");
+      expect(plugin.id).toBe("openclaw-better-gateway");
     });
 
     it("should have correct name", () => {
@@ -79,6 +79,7 @@ describe("Better Gateway Plugin", () => {
     beforeEach(() => {
       mockApi = {
         registerHttpHandler: vi.fn(),
+        registerHttpRoute: vi.fn(),
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -87,6 +88,7 @@ describe("Better Gateway Plugin", () => {
         },
         dataDir: "/tmp/test",
         pluginConfig: {},
+        resolvePath: vi.fn(() => "/tmp/workspace"),
       };
     });
 
@@ -146,9 +148,11 @@ describe("Better Gateway Plugin", () => {
         registerHttpHandler: vi.fn((h) => {
           handler = h;
         }),
+        registerHttpRoute: vi.fn(),
         logger: mockLogger,
         dataDir: "/tmp/test",
         pluginConfig: {},
+        resolvePath: vi.fn(() => "/tmp/workspace"),
       };
 
       plugin.register(mockApi);
