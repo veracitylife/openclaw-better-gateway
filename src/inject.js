@@ -658,6 +658,23 @@
     return output;
   }
 
+  function buildMessageWithFileRefs(baseMessage, fileRefs) {
+    const body = String(baseMessage || "");
+    if (!fileRefs || fileRefs.length === 0) return body;
+
+    const summary = fileRefs.map(function (ref) { return "@" + ref.path; }).join(" ");
+    const blocks = fileRefs.map(function (ref) {
+      const meta = [];
+      if (ref.truncated) meta.push("truncated");
+      if (ref.error) meta.push("error:" + ref.error);
+      const metaText = meta.length ? " " + meta.join(",") : "";
+      const content = ref.content ? "\n" + ref.content : "\n(unavailable)";
+      return "<file path=\"" + ref.path + "\"" + metaText + ">" + content + "\n</file>";
+    }).join("\n\n");
+
+    return body + "\n\nAttached files: " + summary + "\n\n" + blocks;
+  }
+
   function queuePendingRefsForNextSend() {
     if (!mentionState.selected.length) return;
     mentionState.pendingPayloadRefs = mentionState.selected.map(function (entry) { return { ...entry }; });
@@ -842,7 +859,11 @@
               if (frame && frame.type === "req" && frame.method === "chat.send" && frame.params) {
                 const fileRefs = consumePendingFileRefs();
                 if (fileRefs.length > 0) {
-                  frame.params.referencedFiles = fileRefs;
+                  if (typeof frame.params.message === "string") {
+                    frame.params.message = buildMessageWithFileRefs(frame.params.message, fileRefs);
+                  } else if (typeof frame.params.text === "string") {
+                    frame.params.text = buildMessageWithFileRefs(frame.params.text, fileRefs);
+                  }
                   data = JSON.stringify(frame);
                 }
               }
