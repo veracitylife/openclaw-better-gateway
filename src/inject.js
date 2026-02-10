@@ -504,6 +504,15 @@
     return match[1] || "";
   }
 
+  function extractMessageTextFromParams(params) {
+    if (!params || typeof params !== "object") return null;
+    const candidates = [params.message, params.text, params.input, params.prompt, params.query];
+    for (const value of candidates) {
+      if (typeof value === "string") return value;
+    }
+    return null;
+  }
+
   function getMentionCandidates(query) {
     const needle = String(query || "").toLowerCase();
     return mentionState.files
@@ -883,20 +892,18 @@
             if (typeof data === "string") {
               const frame = JSON.parse(data);
               if (frame && frame.type === "req" && frame.method === "chat.send" && frame.params) {
-                const liveRange = mentionState.textarea
-                  ? findMentionRange(mentionState.textarea.value, mentionState.textarea.selectionStart || 0)
-                  : null;
+                const activeTextarea = document.querySelector("main.content textarea") || mentionState.textarea;
+                const activeValue = activeTextarea && typeof activeTextarea.value === "string" ? activeTextarea.value : "";
+                const activeCursor = activeTextarea && typeof activeTextarea.selectionStart === "number" ? activeTextarea.selectionStart : activeValue.length;
+                const liveRange = activeValue ? findMentionRange(activeValue, activeCursor) : null;
 
-                let trailingQuery = null;
-                if (typeof frame.params.message === "string") {
-                  trailingQuery = extractTrailingMentionQuery(frame.params.message);
-                } else if (typeof frame.params.text === "string") {
-                  trailingQuery = extractTrailingMentionQuery(frame.params.text);
-                }
+                const outboundText = extractMessageTextFromParams(frame.params);
+                const trailingQuery = outboundText != null ? extractTrailingMentionQuery(outboundText) : null;
 
-                if (mentionState.pickerOpen || (liveRange && mentionState.textarea) || trailingQuery !== null) {
+                if (mentionState.pickerOpen || (liveRange && activeTextarea) || trailingQuery !== null) {
                   if (!mentionState.pickerOpen) {
-                    if (liveRange) {
+                    if (activeTextarea && liveRange) {
+                      mentionState.textarea = activeTextarea;
                       refreshMentionPicker();
                     } else {
                       const inferred = getMentionCandidates(trailingQuery || "");
@@ -917,6 +924,8 @@
                     frame.params.message = buildMessageWithFileRefs(frame.params.message, fileRefs);
                   } else if (typeof frame.params.text === "string") {
                     frame.params.text = buildMessageWithFileRefs(frame.params.text, fileRefs);
+                  } else if (typeof frame.params.input === "string") {
+                    frame.params.input = buildMessageWithFileRefs(frame.params.input, fileRefs);
                   }
                   data = JSON.stringify(frame);
                 }
