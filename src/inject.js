@@ -248,8 +248,20 @@
     // Try immediately
     if (injectIdeNavItem()) return;
 
-    // Retry with MutationObserver for dynamic content
-    const observer = new MutationObserver(function (mutations, obs) {
+    // Retry a few times with increasing delays (handles SPAs)
+    var retryDelays = [100, 300, 500, 1000, 2000];
+    var retryIndex = 0;
+    
+    function retryInjection() {
+      if (injectIdeNavItem()) return;
+      if (retryIndex < retryDelays.length) {
+        setTimeout(retryInjection, retryDelays[retryIndex++]);
+      }
+    }
+    setTimeout(retryInjection, retryDelays[retryIndex++]);
+
+    // Also use MutationObserver for dynamic content
+    var observer = new MutationObserver(function (mutations, obs) {
       if (injectIdeNavItem()) {
         obs.disconnect();
       }
