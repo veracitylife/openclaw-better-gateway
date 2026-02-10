@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const INJECT_VERSION = "2026-02-10.5";
+  const INJECT_VERSION = "2026-02-10.6";
 
   const config = window.__BETTER_GATEWAY_CONFIG__ || {
     reconnectIntervalMs: 3000,
@@ -741,23 +741,6 @@
         return;
       }
 
-      if (event.key === "Enter" && !event.shiftKey) {
-        var liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
-        if (mentionState.pickerOpen || liveRange) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-          if (!mentionState.pickerOpen && liveRange) {
-            refreshMentionPicker();
-          }
-          var selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
-          if (selected) {
-            selectMentionFile(selected.path);
-          }
-          return;
-        }
-      }
-
       if (event.key === "Backspace" && !textarea.value && mentionState.selected.length > 0) {
         mentionState.selected.pop();
         renderMentionChips();
@@ -771,6 +754,34 @@
   function startChatComposerEnhancer() {
     fetchWorkspaceFiles();
     attachChatComposerEnhancements();
+
+    // Window-level capture handler fires before any framework handlers
+    // (capture phase: window → document → ... → textarea), preventing
+    // the gateway from seeing Enter as a "send message" action.
+    window.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      var target = event.target;
+      if (!target || target.tagName !== "TEXTAREA") return;
+      if (!target.closest || !target.closest("main.content")) return;
+
+      var liveRange = findMentionRange(target.value, target.selectionStart || 0);
+      if (!mentionState.pickerOpen && !liveRange) return;
+
+      mentionState.textarea = target;
+      if (!mentionState.pickerOpen && liveRange) {
+        refreshMentionPicker();
+      }
+
+      var selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
+      if (!selected) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+
+      selectMentionFile(selected.path);
+    }, true);
+
     if (!document.body) return;
     const observer = new MutationObserver(function () {
       try {
