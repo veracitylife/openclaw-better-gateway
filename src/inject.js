@@ -457,6 +457,7 @@
     activeIndex: 0,
     mentionRange: null,
     pendingPayloadRefs: null,
+    suppressNextSubmit: false,
   };
 
   const FILE_CONTEXT_CHAR_LIMIT = 6000;
@@ -551,6 +552,7 @@
 
   function renderMentionChips() {
     if (!mentionState.chips) return;
+    if (typeof document === "undefined" || !document.createElement) return;
     mentionState.chips.innerHTML = "";
 
     mentionState.selected.forEach(function (entry) {
@@ -727,6 +729,12 @@
         }
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
+          event.stopPropagation();
+          if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+          mentionState.suppressNextSubmit = true;
+          setTimeout(function () {
+            mentionState.suppressNextSubmit = false;
+          }, 0);
           const selected = mentionState.pickerItems[mentionState.activeIndex];
           if (selected) selectMentionFile(selected.path);
           return;
@@ -751,7 +759,14 @@
 
     const form = textarea.closest("form");
     if (form) {
-      form.addEventListener("submit", function () {
+      form.addEventListener("submit", function (event) {
+        if (mentionState.suppressNextSubmit) {
+          mentionState.suppressNextSubmit = false;
+          queuePendingRefsForNextSend();
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         queuePendingRefsForNextSend();
       });
     }
