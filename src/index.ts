@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse, request as httpRequest } from "node:ht
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createFileApiHandler, DEFAULT_MAX_FILE_SIZE } from "./file-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -9,6 +10,7 @@ const __dirname = dirname(__filename);
 interface PluginConfig {
   reconnectIntervalMs: number;
   maxReconnectAttempts: number;
+  maxFileSize: number;
 }
 
 interface PluginApi {
@@ -23,11 +25,16 @@ interface PluginApi {
   };
   dataDir: string;
   pluginConfig: PluginConfig;
+  config?: {
+    workspace?: string;
+  };
+  resolvePath?: (path: string) => string;
 }
 
 const DEFAULT_CONFIG: PluginConfig = {
   reconnectIntervalMs: 3000,
   maxReconnectAttempts: 10,
+  maxFileSize: DEFAULT_MAX_FILE_SIZE,
 };
 
 let injectScript: string | null = null;
@@ -100,6 +107,7 @@ function generateLandingPage(config: PluginConfig, gatewayHost: string): string 
     .status.ok { background: #2d5a27; color: #7fff7f; }
     .feature { margin: 8px 0; padding-left: 20px; }
     .feature::before { content: "✓ "; color: #00d4ff; }
+    .new { color: #ff6b6b; font-size: 0.8em; margin-left: 8px; }
   </style>
 </head>
 <body>
@@ -112,6 +120,7 @@ function generateLandingPage(config: PluginConfig, gatewayHost: string): string 
   <div class="feature">Network online/offline detection</div>
   <div class="feature">Configurable retry attempts (${config.maxReconnectAttempts} max)</div>
   <div class="feature">Reconnect interval: ${config.reconnectIntervalMs}ms</div>
+  <div class="feature">File API for workspace access <span class="new">NEW</span></div>
 
   <h2>Option 1: Bookmarklet</h2>
   <p>Drag this to your bookmarks bar, then click it when on the Gateway UI:</p>
@@ -130,6 +139,21 @@ function generateLandingPage(config: PluginConfig, gatewayHost: string): string 
 // ==/UserScript==
 
 fetch('/better-gateway/inject.js').then(r=>r.text()).then(eval);</pre>
+
+  <h2>File API <span class="new">NEW</span></h2>
+  <p>Access workspace files programmatically:</p>
+  <pre>// List files
+GET /better-gateway/api/files?path=/
+
+// Read file
+GET /better-gateway/api/files/read?path=/AGENTS.md
+
+// Write file
+POST /better-gateway/api/files/write
+{"path": "/test.md", "content": "Hello!"}
+
+// Delete file
+DELETE /better-gateway/api/files?path=/test.md</pre>
 
   <h2>Script URL</h2>
   <p><code>/better-gateway/inject.js</code></p>
@@ -174,6 +198,8 @@ export default {
           config.reconnectIntervalMs ?? DEFAULT_CONFIG.reconnectIntervalMs,
         maxReconnectAttempts:
           config.maxReconnectAttempts ?? DEFAULT_CONFIG.maxReconnectAttempts,
+        maxFileSize:
+          config.maxFileSize ?? DEFAULT_CONFIG.maxFileSize,
       };
     },
     uiHints: {
@@ -185,14 +211,32 @@ export default {
         label: "Max Reconnect Attempts",
         placeholder: "10",
       },
+      maxFileSize: {
+        label: "Max File Size (bytes)",
+        placeholder: "10485760",
+        advanced: true,
+      },
     },
   },
 
   register(api: PluginApi): void {
     const config = { ...DEFAULT_CONFIG, ...(api.pluginConfig || {}) };
+    
+    // Resolve workspace directory
+    const workspaceDir = api.resolvePath?.("") || 
+      api.config?.workspace || 
+      process.env.OPENCLAW_WORKSPACE || 
+      process.cwd();
+    
     api.logger.info(
-      `Better Gateway loaded (reconnect: ${config.reconnectIntervalMs}ms, max: ${config.maxReconnectAttempts})`
+      `Better Gateway loaded (reconnect: ${config.reconnectIntervalMs}ms, max: ${config.maxReconnectAttempts}, workspace: ${workspaceDir})`
     );
+
+    // Create file API handler
+    const handleFileApi = createFileApiHandler({
+      workspaceDir,
+      maxFileSize: config.maxFileSize,
+    });
 
     api.registerHttpHandler(
       async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
@@ -205,6 +249,11 @@ export default {
 
         const hostHeader = req.headers.host || "localhost:18789";
         const gatewayHost = `http://${hostHeader}`;
+
+        // Handle file API routes
+        if (pathname.startsWith("/better-gateway/api/files")) {
+          return handleFileApi(req, res, pathname);
+        }
 
         // Serve the inject script
         if (pathname === "/better-gateway/inject.js") {

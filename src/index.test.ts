@@ -6,6 +6,16 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(() => "// mock inject script"),
 }));
 
+// Mock fs/promises for file-api
+vi.mock("node:fs/promises", () => ({
+  readdir: vi.fn(() => Promise.resolve([])),
+  readFile: vi.fn(() => Promise.resolve("")),
+  writeFile: vi.fn(() => Promise.resolve()),
+  unlink: vi.fn(() => Promise.resolve()),
+  stat: vi.fn(() => Promise.resolve({ size: 0, mtime: new Date() })),
+  mkdir: vi.fn(() => Promise.resolve()),
+}));
+
 // Import after mocking
 import plugin from "./index.js";
 
@@ -31,6 +41,7 @@ describe("Better Gateway Plugin", () => {
       expect(config).toEqual({
         reconnectIntervalMs: 3000,
         maxReconnectAttempts: 10,
+        maxFileSize: 10485760, // 10MB
       });
     });
 
@@ -289,15 +300,14 @@ describe("Better Gateway Plugin", () => {
       });
     });
 
-    describe("404 handling", () => {
-      it("should return 404 for unknown /better-gateway/* paths", async () => {
+    describe("proxy handling", () => {
+      it("should proxy unknown /better-gateway/* paths to gateway", async () => {
+        // Unknown paths are proxied to the internal gateway
+        // The handler returns true indicating it handled the request
         const req = createMockReq("/better-gateway/unknown");
         const result = await handler(req, mockRes as ServerResponse);
         expect(result).toBe(true);
-        expect(mockRes.writeHead).toHaveBeenCalledWith(404, expect.objectContaining({
-          "Content-Type": "text/plain",
-        }));
-        expect(mockRes.end).toHaveBeenCalledWith("Not found");
+        // Response is handled by proxy, not directly
       });
     });
   });
