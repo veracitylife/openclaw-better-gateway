@@ -7,15 +7,11 @@
 export interface IdePageConfig {
   monacoVersion: string;
   theme: "vs-dark" | "vs" | "hc-black";
-  chatEnabled: boolean;
-  chatDefaultOpen: boolean;
 }
 
 const DEFAULT_CONFIG: IdePageConfig = {
   monacoVersion: "0.52.0",
   theme: "vs-dark",
-  chatEnabled: true,
-  chatDefaultOpen: true,
 };
 
 /**
@@ -550,87 +546,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       background: #555;
     }
     
-    /* ==================== Chat Sidebar ==================== */
-    
-    #chat-resize-handle {
-      width: 4px;
-      cursor: col-resize;
-      background: transparent;
-      flex-shrink: 0;
-    }
-    
-    #chat-resize-handle:hover {
-      background: var(--accent);
-    }
-    
-    #chat-sidebar {
-      width: 420px;
-      min-width: 320px;
-      max-width: 700px;
-      background: var(--bg-primary);
-      border-left: 1px solid var(--border-color);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    
-    #chat-sidebar.collapsed {
-      width: 0;
-      min-width: 0;
-      border-left: none;
-    }
-    
-    #chat-iframe {
-      flex: 1;
-      width: 100%;
-      border: none;
-      background: var(--bg-primary);
-    }
-    
-    /* Context bar at top of chat sidebar */
-    #chat-context-bar {
-      display: none;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      background: var(--bg-tertiary);
-      border-bottom: 1px solid var(--border-color);
-      font-size: 11px;
-      color: var(--text-secondary);
-    }
-    
-    #chat-context-bar.has-context {
-      display: flex;
-    }
-    
-    #chat-context-bar .context-label {
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    #chat-context-bar .context-files {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--text-primary);
-    }
-    
-    #chat-context-bar .context-clear {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 12px;
-    }
-    
-    #chat-context-bar .context-clear:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
   </style>
 </head>
 <body>
@@ -652,9 +567,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         ↻ Refresh
       </button>
       <span id="save-status"></span>
-      <button class="toolbar-btn" id="toggle-chat" title="Toggle Chat (Ctrl+Shift+C)">
-        💬 Chat
-      </button>
     </div>
     
     <div id="main">
@@ -682,21 +594,9 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
               <div class="shortcut"><kbd>⌘/Ctrl+B</kbd> <span>Toggle sidebar</span></div>
               <div class="shortcut"><kbd>⌘/Ctrl+P</kbd> <span>Quick open</span></div>
               <div class="shortcut"><kbd>⌘/Ctrl+W</kbd> <span>Close tab</span></div>
-              <div class="shortcut"><kbd>⌘/Ctrl+Shift+C</kbd> <span>Toggle chat</span></div>
             </div>
           </div>
         </div>
-      </div>
-      
-      <div id="chat-resize-handle"></div>
-      
-      <div id="chat-sidebar">
-        <div id="chat-context-bar">
-          <span class="context-label">📎 Context:</span>
-          <span class="context-files"></span>
-          <button class="context-clear" title="Clear context">×</button>
-        </div>
-        <iframe id="chat-iframe" src="/chat"></iframe>
       </div>
     </div>
   </div>
@@ -724,11 +624,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       models: new Map(), // path -> monaco model
       expandedDirs: new Set(['']),
       unsavedChanges: new Map(), // path -> true
-      // Chat context state
-      chatContext: {
-        openFiles: [],
-        selection: null, // { path, text, startLine, endLine }
-      },
     };
     
     // DOM Elements
@@ -742,13 +637,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       saveStatus: document.getElementById('save-status'),
       contextMenu: document.getElementById('context-menu'),
       fileSearch: document.getElementById('file-search'),
-      // Chat sidebar elements
-      chatSidebar: document.getElementById('chat-sidebar'),
-      chatResizeHandle: document.getElementById('chat-resize-handle'),
-      chatIframe: document.getElementById('chat-iframe'),
-      chatContextBar: document.getElementById('chat-context-bar'),
-      chatContextFiles: document.querySelector('#chat-context-bar .context-files'),
-      chatContextClear: document.querySelector('#chat-context-bar .context-clear'),
     };
     
     // Search state
@@ -1274,12 +1162,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           }
         }
         
-        // Cmd/Ctrl+Shift+C - Toggle chat sidebar
-        if (modKey && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-          e.preventDefault();
-          toggleChatSidebar();
-        }
-        
         // Escape - Hide context menu and clear search
         if (e.key === 'Escape') {
           hideContextMenu();
@@ -1338,134 +1220,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       });
     }
     
-    // ==================== Chat Sidebar ====================
-    
-    function toggleChatSidebar() {
-      const sidebar = elements.chatSidebar;
-      const handle = elements.chatResizeHandle;
-      
-      if (sidebar.classList.contains('collapsed')) {
-        sidebar.classList.remove('collapsed');
-        handle.style.display = '';
-      } else {
-        sidebar.classList.add('collapsed');
-        handle.style.display = 'none';
-      }
-      
-      // Save preference
-      localStorage.setItem('chatSidebarOpen', !sidebar.classList.contains('collapsed'));
-    }
-    
-    function updateChatContext() {
-      // Collect context from open files and selection
-      const context = {
-        type: 'ide-context',
-        openFiles: state.openTabs.slice(),
-        activeFile: state.activeTab,
-        selection: null,
-      };
-      
-      // Get current selection if any
-      if (state.editor && state.activeTab) {
-        const selection = state.editor.getSelection();
-        if (selection && !selection.isEmpty()) {
-          const model = state.editor.getModel();
-          if (model) {
-            context.selection = {
-              path: state.activeTab,
-              text: model.getValueInRange(selection),
-              startLine: selection.startLineNumber,
-              endLine: selection.endLineNumber,
-            };
-          }
-        }
-      }
-      
-      // Update context bar display
-      state.chatContext = context;
-      updateContextBar();
-      
-      // Send to chat iframe via postMessage
-      if (elements.chatIframe?.contentWindow) {
-        elements.chatIframe.contentWindow.postMessage(context, '*');
-      }
-    }
-    
-    function updateContextBar() {
-      const bar = elements.chatContextBar;
-      const filesEl = elements.chatContextFiles;
-      if (!bar || !filesEl) return;
-      
-      const ctx = state.chatContext;
-      const hasContext = ctx.selection || ctx.openFiles.length > 0;
-      
-      if (hasContext) {
-        bar.classList.add('has-context');
-        if (ctx.selection) {
-          const lines = ctx.selection.endLine - ctx.selection.startLine + 1;
-          filesEl.textContent = \`\${ctx.selection.path} (L\${ctx.selection.startLine}-\${ctx.selection.endLine}, \${lines} lines)\`;
-        } else if (ctx.activeFile) {
-          filesEl.textContent = ctx.activeFile + (ctx.openFiles.length > 1 ? \` (+\${ctx.openFiles.length - 1} more)\` : '');
-        } else {
-          filesEl.textContent = \`\${ctx.openFiles.length} file(s) open\`;
-        }
-      } else {
-        bar.classList.remove('has-context');
-      }
-    }
-    
-    function clearChatContext() {
-      state.chatContext = { openFiles: [], selection: null };
-      updateContextBar();
-      if (elements.chatIframe?.contentWindow) {
-        elements.chatIframe.contentWindow.postMessage({ type: 'ide-context-clear' }, '*');
-      }
-    }
-    
-    function setupChatSidebar() {
-      // Restore open/closed state
-      const savedOpen = localStorage.getItem('chatSidebarOpen');
-      const shouldOpen = savedOpen === null ? ${config.chatDefaultOpen} : savedOpen === 'true';
-      
-      if (!shouldOpen) {
-        elements.chatSidebar.classList.add('collapsed');
-        elements.chatResizeHandle.style.display = 'none';
-      }
-      
-      // Toggle button
-      document.getElementById('toggle-chat')?.addEventListener('click', toggleChatSidebar);
-      
-      // Context clear button
-      elements.chatContextClear?.addEventListener('click', clearChatContext);
-      
-      // Resize handle for chat sidebar
-      let isResizingChat = false;
-      
-      elements.chatResizeHandle?.addEventListener('mousedown', () => {
-        isResizingChat = true;
-        document.body.style.cursor = 'col-resize';
-      });
-      
-      document.addEventListener('mousemove', (e) => {
-        if (!isResizingChat) return;
-        const containerWidth = document.getElementById('main').offsetWidth;
-        const newWidth = containerWidth - e.clientX;
-        if (newWidth >= 320 && newWidth <= 700) {
-          elements.chatSidebar.style.width = newWidth + 'px';
-        }
-      });
-      
-      document.addEventListener('mouseup', () => {
-        if (isResizingChat) {
-          isResizingChat = false;
-          document.body.style.cursor = '';
-        }
-      });
-      
-      // Listen for selection changes to update context
-      // (will be connected after editor init)
-    }
-    
     // ==================== Initialize ====================
     
     async function init() {
@@ -1500,11 +1254,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           }
         });
         
-        // Update chat context when selection changes
-        state.editor.onDidChangeCursorSelection(() => {
-          updateChatContext();
-        });
-        
         // Load file tree
         await refreshFileTree();
         
@@ -1512,7 +1261,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         setupKeyboardShortcuts();
         setupResizeHandle();
         setupFileSearch();
-        setupChatSidebar();
         
         // Context menu handlers
         elements.contextMenu.querySelectorAll('.context-item').forEach(item => {
