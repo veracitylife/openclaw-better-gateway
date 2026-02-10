@@ -385,6 +385,7 @@ better-gateway-dev/
 - All nav item clicks restore main content before navigation
 - Chat link click intercepted to toggle back without page reload
 - Supports both ⌘ (Mac) and Ctrl (Windows/Linux) for shortcuts
+- Open Folder workspace switcher added in IDE toolbar (replaces Refresh)
 
 **Test Coverage:** 106 tests passing
 
@@ -394,12 +395,13 @@ better-gateway-dev/
 
 **Goal:** Make the IDE Cursor-like with integrated chat sidebar, powered by OpenClaw.
 
-11. [ ] **Integrated chat sidebar on the right**
-    - Split view: file tree (left) | editor (center) | chat (right)
-    - Chat panel connects to OpenClaw gateway WebSocket
-    - Send messages, receive responses in real-time
-    - Resizable panel widths
-    - Toggle chat panel visibility (⌘/Ctrl+Shift+C)
+11. [~] **Integrated chat sidebar on the right** *(partially complete)*
+    - [x] Split view scaffold exists: file tree (left) | editor (center) | chat (right)
+    - [x] IDE is accessible from gateway sidebar (native-feeling IDE tab/view)
+    - [ ] Chat panel connects to OpenClaw gateway WebSocket
+    - [ ] Send messages, receive responses in real-time
+    - [ ] Resizable panel widths
+    - [ ] Toggle chat panel visibility (⌘/Ctrl+Shift+C)
 12. [ ] `@file` mention autocomplete
     - Type `@` to see file picker
     - Autocomplete from workspace files
@@ -502,12 +504,12 @@ Response: { ok: true }
 
 ## Success Metrics
 
-- [ ] Can browse files in sidebar
-- [ ] Can edit and save files
+- [x] Can browse files in sidebar
+- [x] Can edit and save files
 - [ ] Can reference files in chat with `@`
 - [ ] Chat edits reflect in editor
 - [ ] Works offline (after initial load)
-- [ ] State persists across refreshes
+- [x] State persists across refreshes
 
 ---
 
