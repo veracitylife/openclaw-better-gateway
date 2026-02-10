@@ -506,6 +506,91 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       display: flex;
       flex-direction: column;
       gap: 8px;
+      position: relative;
+    }
+
+    #chat-file-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 0;
+    }
+
+    .chat-file-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid #2a4a67;
+      background: #1f3347;
+      color: #dbeafe;
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .chat-file-chip .chip-path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 260px;
+    }
+
+    .chat-file-chip .chip-remove {
+      border: none;
+      background: transparent;
+      color: #dbeafe;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+    }
+
+    #chat-file-picker {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: calc(100% + 6px);
+      max-height: 220px;
+      overflow: auto;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--bg-primary);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      z-index: 10;
+      display: none;
+    }
+
+    #chat-file-picker.open {
+      display: block;
+    }
+
+    .chat-file-option {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .chat-file-option:hover,
+    .chat-file-option.active {
+      background: var(--bg-hover);
+    }
+
+    .chat-file-option .file-path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-file-option .file-name {
+      color: var(--text-muted);
+      font-size: 11px;
     }
 
     #chat-input {
@@ -847,6 +932,8 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         </div>
         <div id="chat-messages"></div>
         <div id="chat-composer">
+          <div id="chat-file-picker"></div>
+          <div id="chat-file-chips"></div>
           <textarea id="chat-input" placeholder="Ask OpenClaw… (Enter to send, Shift+Enter for newline)"></textarea>
           <div id="chat-composer-actions">
             <span id="chat-hint">Session stream via gateway WebSocket</span>
@@ -885,6 +972,11 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       chatConnected: false,
       chatStatus: 'connecting', // connecting | connected | reconnecting | disconnected
       chatRunId: null,
+      chatMentionFiles: [],
+      chatMentionPickerOpen: false,
+      chatMentionActiveIndex: 0,
+      chatMentionCandidates: [],
+      chatMentionRange: null,
       chatPanelVisible: true,
       chatPanelWidth: 380,
     };
@@ -906,6 +998,8 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       chatResizeHandle: document.getElementById('chat-resize-handle'),
       chatConnectionState: document.getElementById('chat-connection-state'),
       chatMessages: document.getElementById('chat-messages'),
+      chatFilePicker: document.getElementById('chat-file-picker'),
+      chatFileChips: document.getElementById('chat-file-chips'),
       chatInput: document.getElementById('chat-input'),
       chatSend: document.getElementById('chat-send'),
       toggleChatBtn: document.getElementById('toggle-chat-btn'),
@@ -1747,12 +1841,139 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       }
     }
 
+    function findMentionRange(value, cursorIndex) {
+      const before = value.slice(0, cursorIndex);
+      const match = before.match(/(^|\s)@([^\s@]*)$/);
+      if (!match) return null;
+      const token = match[0];
+      const query = match[2] || '';
+      const atIndex = cursorIndex - token.length + token.lastIndexOf('@');
+      return { start: atIndex, end: cursorIndex, query };
+    }
+
+    function getMentionCandidates(query) {
+      const needle = String(query || '').toLowerCase();
+      const files = state.files
+        .filter((entry) => entry.type === 'file')
+        .map((entry) => entry.path)
+        .filter((path) => !state.chatMentionFiles.includes(path));
+
+      const ranked = files
+        .map((path) => {
+          const lower = path.toLowerCase();
+          const index = needle ? lower.indexOf(needle) : 0;
+          return { path, index, name: path.split('/').pop() || path };
+        })
+        .filter((item) => !needle || item.index !== -1)
+        .sort((a, b) => {
+          if (a.index !== b.index) return a.index - b.index;
+          if (a.path.length !== b.path.length) return a.path.length - b.path.length;
+          return a.path.localeCompare(b.path);
+        });
+
+      return ranked.slice(0, 25);
+    }
+
+    function closeMentionPicker() {
+      state.chatMentionPickerOpen = false;
+      state.chatMentionCandidates = [];
+      state.chatMentionRange = null;
+      elements.chatFilePicker.classList.remove('open');
+      elements.chatFilePicker.innerHTML = '';
+    }
+
+    function renderMentionPicker() {
+      if (!state.chatMentionPickerOpen || state.chatMentionCandidates.length === 0) {
+        closeMentionPicker();
+        return;
+      }
+
+      elements.chatFilePicker.innerHTML = '';
+      state.chatMentionCandidates.forEach((item, idx) => {
+        const option = document.createElement('div');
+        option.className = 'chat-file-option' + (idx === state.chatMentionActiveIndex ? ' active' : '');
+        option.dataset.path = item.path;
+        option.innerHTML = '<span class="file-path">' + item.path + '</span><span class="file-name">' + item.name + '</span>';
+        option.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          selectMentionFile(item.path);
+        });
+        elements.chatFilePicker.appendChild(option);
+      });
+      elements.chatFilePicker.classList.add('open');
+    }
+
+    function renderMentionChips() {
+      elements.chatFileChips.innerHTML = '';
+      for (const path of state.chatMentionFiles) {
+        const chip = document.createElement('div');
+        chip.className = 'chat-file-chip';
+        chip.innerHTML = '<span class="chip-path">' + path + '</span>';
+        const remove = document.createElement('button');
+        remove.className = 'chip-remove';
+        remove.type = 'button';
+        remove.setAttribute('aria-label', 'Remove ' + path);
+        remove.textContent = '×';
+        remove.addEventListener('click', () => {
+          state.chatMentionFiles = state.chatMentionFiles.filter((p) => p !== path);
+          renderMentionChips();
+          refreshMentionPicker();
+        });
+        chip.appendChild(remove);
+        elements.chatFileChips.appendChild(chip);
+      }
+    }
+
+    function refreshMentionPicker() {
+      const range = findMentionRange(elements.chatInput.value, elements.chatInput.selectionStart || 0);
+      if (!range) {
+        closeMentionPicker();
+        return;
+      }
+
+      state.chatMentionRange = range;
+      state.chatMentionCandidates = getMentionCandidates(range.query);
+      if (state.chatMentionCandidates.length === 0) {
+        closeMentionPicker();
+        return;
+      }
+
+      if (state.chatMentionActiveIndex >= state.chatMentionCandidates.length) {
+        state.chatMentionActiveIndex = 0;
+      }
+      state.chatMentionPickerOpen = true;
+      renderMentionPicker();
+    }
+
+    function selectMentionFile(path) {
+      if (!path) return;
+      if (!state.chatMentionFiles.includes(path)) {
+        state.chatMentionFiles.push(path);
+      }
+
+      const range = state.chatMentionRange;
+      if (range) {
+        const value = elements.chatInput.value;
+        const replacement = value.slice(0, range.start) + value.slice(range.end);
+        elements.chatInput.value = replacement;
+        const pos = range.start;
+        elements.chatInput.setSelectionRange(pos, pos);
+      }
+
+      renderMentionChips();
+      closeMentionPicker();
+      elements.chatInput.focus();
+    }
+
     async function sendChatMessage() {
       const text = elements.chatInput.value.trim();
       if (!text) return;
 
       appendChatMessage('user', text, 'final', null);
       elements.chatInput.value = '';
+      closeMentionPicker();
+      state.chatMentionFiles = [];
+      renderMentionChips();
 
       const runId = createId();
       state.chatRunId = runId;
@@ -1827,13 +2048,51 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       });
 
       elements.chatSend.addEventListener('click', sendChatMessage);
+      elements.chatInput.addEventListener('input', refreshMentionPicker);
+      elements.chatInput.addEventListener('click', refreshMentionPicker);
+      elements.chatInput.addEventListener('blur', () => {
+        setTimeout(() => {
+          if (document.activeElement !== elements.chatInput) {
+            closeMentionPicker();
+          }
+        }, 80);
+      });
       elements.chatInput.addEventListener('keydown', (e) => {
+        if (state.chatMentionPickerOpen) {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            state.chatMentionActiveIndex = (state.chatMentionActiveIndex + 1) % state.chatMentionCandidates.length;
+            renderMentionPicker();
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            state.chatMentionActiveIndex = (state.chatMentionActiveIndex - 1 + state.chatMentionCandidates.length) % state.chatMentionCandidates.length;
+            renderMentionPicker();
+            return;
+          }
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const selected = state.chatMentionCandidates[state.chatMentionActiveIndex];
+            if (selected) {
+              selectMentionFile(selected.path);
+            }
+            return;
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            closeMentionPicker();
+            return;
+          }
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           sendChatMessage();
         }
       });
 
+      renderMentionChips();
       setupChatPanelResize();
       chatTransport.connect();
       window.addEventListener('beforeunload', () => {

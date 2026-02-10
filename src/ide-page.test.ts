@@ -73,6 +73,26 @@ describe("IDE Page Generator", () => {
       expect(html).toContain('Ctrl+Shift+C');
     });
 
+    it("should include @file mention picker and chips UI in chat composer", () => {
+      const html = generateIdePage();
+
+      expect(html).toContain('id="chat-file-picker"');
+      expect(html).toContain('id="chat-file-chips"');
+      expect(html).toContain('chat-file-chip');
+      expect(html).toContain('chat-file-option');
+    });
+
+    it("should include mention autocomplete handlers with keyboard selection", () => {
+      const html = generateIdePage();
+
+      expect(html).toContain('findMentionRange');
+      expect(html).toContain('refreshMentionPicker');
+      expect(html).toContain('selectMentionFile');
+      expect(html).toContain("e.key === 'ArrowDown'");
+      expect(html).toContain("e.key === 'ArrowUp'");
+      expect(html).toContain("state.chatMentionFiles.push(path)");
+    });
+
     it("should include toolbar with buttons", () => {
       const html = generateIdePage();
       
