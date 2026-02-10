@@ -942,32 +942,6 @@
             if (typeof data === "string") {
               const frame = JSON.parse(data);
               if (frame && frame.type === "req" && frame.method === "chat.send" && frame.params) {
-                const activeTextarea = document.querySelector("main.content textarea") || mentionState.textarea;
-                const activeValue = activeTextarea && typeof activeTextarea.value === "string" ? activeTextarea.value : "";
-                const activeCursor = activeTextarea && typeof activeTextarea.selectionStart === "number" ? activeTextarea.selectionStart : activeValue.length;
-                const liveRange = activeValue ? findMentionRange(activeValue, activeCursor) : null;
-
-                const outboundText = extractMessageTextFromParams(frame.params);
-                const trailingQuery = outboundText != null ? extractTrailingMentionQuery(outboundText) : null;
-
-                if (mentionState.pickerOpen || (liveRange && activeTextarea) || trailingQuery !== null) {
-                  if (!mentionState.pickerOpen) {
-                    if (activeTextarea && liveRange) {
-                      mentionState.textarea = activeTextarea;
-                      refreshMentionPicker();
-                    } else {
-                      const inferred = getMentionCandidates(trailingQuery || "");
-                      mentionState.pickerItems = inferred;
-                      mentionState.activeIndex = 0;
-                    }
-                  }
-                  const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
-                  if (selected) {
-                    selectMentionFile(selected.path);
-                    return;
-                  }
-                }
-
                 const fileRefs = consumePendingFileRefs();
                 if (fileRefs.length > 0) {
                   if (typeof frame.params.message === "string") {
