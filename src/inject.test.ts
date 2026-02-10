@@ -543,8 +543,9 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       const rawSend = OriginalWebSocket.mock.instances[OriginalWebSocket.mock.instances.length - 1]._rawSend;
       const payload = JSON.parse(rawSend.mock.calls[0][0]);
       expect(payload.params.referencedFiles).toBeUndefined();
-      expect(payload.params.message).toContain('Attached files: @AGENTS.md');
-      expect(payload.params.message).toContain('<file path="AGENTS.md"');
+      expect(payload.params.message).toContain('Attached files: AGENTS.md');
+      expect(payload.params.message).not.toContain('<file path="AGENTS.md"');
+      expect(payload.params.message).not.toContain('context content');
     });
 
     it("should not auto-attach from raw @token without explicit mention selection", async () => {
@@ -607,8 +608,48 @@ describe("inject.js - WebSocket auto-reconnect", () => {
 
       expect(rawSend).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(rawSend.mock.calls[0][0]);
-      expect(payload.params.message).toContain('Attached files: @AGENTS.md');
-      expect(payload.params.message).toContain('<file path="AGENTS.md"');
+      expect(payload.params.message).toContain('Attached files: AGENTS.md');
+      expect(payload.params.message).not.toContain('<file path="AGENTS.md"');
+      expect(payload.params.message).not.toContain('context content');
+    });
+
+    it("should clear stale queued attachment when user starts typing a new message", async () => {
+      window.fetch = vi.fn(async (url: string) => {
+        if (String(url).includes('/api/files/read')) {
+          return { ok: true, json: async () => ({ content: 'context content' }) } as any;
+        }
+        return { ok: true, json: async () => ({ files: [{ path: 'SOUL.md', type: 'file' }] }) } as any;
+      });
+
+      const { textarea, form } = createChatComposer();
+      window.eval(injectScript);
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+
+      textarea.value = '@SO';
+      textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+      textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Queue refs for "next send", but simulate that no outbound chat.send happened yet.
+      form.dispatchEvent(new window.Event('submit', { bubbles: true }));
+
+      // User begins a different message; this should clear stale queued refs.
+      textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'A', bubbles: true, cancelable: true }));
+      textarea.value = 'A new message';
+      textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+      textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+      const ws = new window.WebSocket('ws://localhost:8080');
+      ws.send(JSON.stringify({ type: 'req', id: '3', method: 'chat.send', params: { message: 'A new message' } }));
+
+      const rawSend = OriginalWebSocket.mock.instances[OriginalWebSocket.mock.instances.length - 1]._rawSend;
+      const payload = JSON.parse(rawSend.mock.calls[0][0]);
+      expect(payload.params.message).toBe('A new message');
+      expect(payload.params.message).not.toContain('Attached files: SOUL.md');
     });
   });
   });

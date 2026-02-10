@@ -495,6 +495,20 @@
     return mentionState.sendBlockedUntil > Date.now();
   }
 
+  function clearPendingPayloadRefs(reason) {
+    if (!mentionState.pendingPayloadRefs || mentionState.pendingPayloadRefs.length === 0) return;
+    mentionDebug("pending-refs:cleared", { reason, count: mentionState.pendingPayloadRefs.length });
+    mentionState.pendingPayloadRefs = null;
+  }
+
+  function isTextEditingKey(event) {
+    const key = event && event.key ? String(event.key) : "";
+    if (!key) return false;
+    if (event.metaKey || event.ctrlKey || event.altKey) return false;
+    if (key.length === 1) return true;
+    return key === "Backspace" || key === "Delete";
+  }
+
   function resolveMentionByEnter(textarea, source) {
     const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
     if (!mentionState.pickerOpen && !liveRange) return false;
@@ -744,17 +758,17 @@
     const body = String(baseMessage || "");
     if (!fileRefs || fileRefs.length === 0) return body;
 
-    const summary = fileRefs.map(function (ref) { return "@" + ref.path; }).join(" ");
-    const blocks = fileRefs.map(function (ref) {
-      const meta = [];
-      if (ref.truncated) meta.push("truncated");
-      if (ref.error) meta.push("error:" + ref.error);
-      const metaText = meta.length ? " " + meta.join(",") : "";
-      const content = ref.content ? "\n" + ref.content : "\n(unavailable)";
-      return "<file path=\"" + ref.path + "\"" + metaText + ">" + content + "\n</file>";
-    }).join("\n\n");
-
-    return body + "\n\nAttached files: " + summary + "\n\n" + blocks;
+    const summary = fileRefs
+      .map(function (ref) {
+        const path = String((ref && ref.path) || "");
+        if (!path) return "";
+        const parts = path.split("/");
+        return parts[parts.length - 1] || path;
+      })
+      .filter(Boolean)
+      .join(", ");
+    if (!summary) return body;
+    return body + "\n\nAttached files: " + summary;
   }
 
   function queuePendingRefsForNextSend() {
@@ -814,6 +828,9 @@
     textarea.addEventListener("click", refreshMentionPicker);
     textarea.addEventListener("keydown", function (event) {
       const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
+      if (isTextEditingKey(event)) {
+        clearPendingPayloadRefs("new-input");
+      }
       mentionDebug("textarea:keydown", {
         key: event.key,
         shiftKey: event.shiftKey,
