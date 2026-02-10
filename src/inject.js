@@ -634,7 +634,9 @@
   }
 
   function consumePendingFileRefs() {
-    const refs = mentionState.pendingPayloadRefs;
+    const refs = mentionState.pendingPayloadRefs && mentionState.pendingPayloadRefs.length
+      ? mentionState.pendingPayloadRefs
+      : mentionState.selected;
     mentionState.pendingPayloadRefs = null;
     if (!refs || refs.length === 0) return [];
 
@@ -655,6 +657,8 @@
       });
       remaining -= slice.length;
     });
+    mentionState.selected = [];
+    renderMentionChips();
     return output;
   }
 
@@ -785,15 +789,22 @@
     const form = textarea.closest("form");
     if (form) {
       form.addEventListener("submit", function (event) {
-        if (mentionState.suppressNextSubmit) {
+        const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
+        if (mentionState.suppressNextSubmit || mentionState.pickerOpen || liveRange) {
           mentionState.suppressNextSubmit = false;
-          queuePendingRefsForNextSend();
+          if (!mentionState.pickerOpen && liveRange) {
+            refreshMentionPicker();
+          }
+          const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
+          if (selected) {
+            selectMentionFile(selected.path);
+          }
           event.preventDefault();
           event.stopPropagation();
           return;
         }
         queuePendingRefsForNextSend();
-      });
+      }, true);
     }
 
     const sendButton = mentionState.composer.querySelector('button[type="submit"]');
