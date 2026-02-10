@@ -833,9 +833,59 @@
     renderMentionChips();
   }
 
+  function attachGlobalMentionGuards() {
+    if (attachGlobalMentionGuards._installed) return;
+    attachGlobalMentionGuards._installed = true;
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      const target = event.target;
+      if (!target || target.tagName !== "TEXTAREA") return;
+      const textarea = target;
+      const inMain = textarea.closest && textarea.closest("main.content");
+      if (!inMain) return;
+
+      const range = findMentionRange(textarea.value, textarea.selectionStart || textarea.value.length);
+      if (!range && !mentionState.pickerOpen) return;
+
+      mentionState.textarea = textarea;
+      if (!mentionState.pickerOpen) refreshMentionPicker();
+      const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
+      if (!selected) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      selectMentionFile(selected.path);
+    }, true);
+
+    document.addEventListener("submit", function (event) {
+      const form = event.target;
+      if (!form || !form.querySelector) return;
+      const textarea = form.querySelector("textarea");
+      if (!textarea) return;
+      const inMain = textarea.closest && textarea.closest("main.content");
+      if (!inMain) return;
+
+      const range = findMentionRange(textarea.value, textarea.selectionStart || textarea.value.length);
+      if (!range && !mentionState.pickerOpen) return;
+
+      mentionState.textarea = textarea;
+      if (!mentionState.pickerOpen) refreshMentionPicker();
+      const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
+      if (!selected) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      selectMentionFile(selected.path);
+    }, true);
+  }
+
   function startChatComposerEnhancer() {
     fetchWorkspaceFiles();
     attachChatComposerEnhancements();
+    attachGlobalMentionGuards();
     if (!document.body) return;
     const observer = new MutationObserver(function () {
       try {
