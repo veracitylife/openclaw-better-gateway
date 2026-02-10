@@ -489,12 +489,19 @@
 
   function findMentionRange(value, cursorIndex) {
     const before = value.slice(0, cursorIndex);
-    const match = before.match(/(^|\s)@([^\s@]*)$/);
+    const match = before.match(/(^|\s)@([^\s@.,!?;:]*)$/);
     if (!match) return null;
     const token = match[0];
     const query = match[2] || "";
     const atIndex = cursorIndex - token.length + token.lastIndexOf("@");
     return { start: atIndex, end: cursorIndex, query };
+  }
+
+  function extractTrailingMentionQuery(value) {
+    const text = String(value || "");
+    const match = text.match(/(?:^|\s)@([^\s@.,!?;:]*)$/);
+    if (!match) return null;
+    return match[1] || "";
   }
 
   function getMentionCandidates(query) {
@@ -880,9 +887,22 @@
                   ? findMentionRange(mentionState.textarea.value, mentionState.textarea.selectionStart || 0)
                   : null;
 
-                if (mentionState.pickerOpen || (liveRange && mentionState.textarea)) {
+                let trailingQuery = null;
+                if (typeof frame.params.message === "string") {
+                  trailingQuery = extractTrailingMentionQuery(frame.params.message);
+                } else if (typeof frame.params.text === "string") {
+                  trailingQuery = extractTrailingMentionQuery(frame.params.text);
+                }
+
+                if (mentionState.pickerOpen || (liveRange && mentionState.textarea) || trailingQuery !== null) {
                   if (!mentionState.pickerOpen) {
-                    refreshMentionPicker();
+                    if (liveRange) {
+                      refreshMentionPicker();
+                    } else {
+                      const inferred = getMentionCandidates(trailingQuery || "");
+                      mentionState.pickerItems = inferred;
+                      mentionState.activeIndex = 0;
+                    }
                   }
                   const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
                   if (selected) {
