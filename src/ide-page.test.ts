@@ -63,6 +63,16 @@ describe("IDE Page Generator", () => {
       expect(html).toContain("id=\"tab-bar\"");
     });
 
+    it("should include integrated chat panel shell", () => {
+      const html = generateIdePage();
+
+      expect(html).toContain('id="chat-panel"');
+      expect(html).toContain('id="chat-messages"');
+      expect(html).toContain('id="chat-input"');
+      expect(html).toContain('id="chat-send"');
+      expect(html).toContain('Ctrl+Shift+C');
+    });
+
     it("should include toolbar with buttons", () => {
       const html = generateIdePage();
       
@@ -125,6 +135,15 @@ describe("IDE Page Generator", () => {
       
       expect(html).toContain("saveCurrentFile");
       expect(html).toContain("id=\"save-status\"");
+    });
+
+    it("should include chat transport protocol wiring", () => {
+      const html = generateIdePage();
+
+      expect(html).toContain("openclaw.control.settings.v1");
+      expect(html).toContain("chat.send");
+      expect(html).toContain("sendRequest('connect'");
+      expect(html).toContain("new WebSocket");
     });
 
     it("should include localStorage state persistence", () => {
