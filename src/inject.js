@@ -138,12 +138,6 @@
       width: 100%;
       height: 100%;
       border: none;
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
       background: #1e1e1e;
     `;
     return frame;
@@ -161,19 +155,23 @@
     const main = document.querySelector("main.content");
     if (!main) return;
 
-    let ideFrame = document.getElementById("better-gateway-ide-frame");
-    
-    // Create iframe if it doesn't exist
-    if (!ideFrame) {
-      ideFrame = createIdeFrame();
-      // Insert frame as sibling to main, inside the same parent
-      main.parentNode.style.position = "relative";
-      main.parentNode.appendChild(ideFrame);
+    // Store original content if not already stored
+    if (!main.dataset.originalContent) {
+      main.dataset.originalContent = main.innerHTML;
     }
 
-    // Hide main content, show IDE
-    main.style.display = "none";
-    ideFrame.style.display = "block";
+    // Create or get the IDE frame
+    let ideFrame = document.getElementById("better-gateway-ide-frame");
+    if (!ideFrame) {
+      ideFrame = createIdeFrame();
+    }
+
+    // Replace main content with iframe
+    main.innerHTML = "";
+    main.appendChild(ideFrame);
+    
+    // Make main fill available space
+    main.style.cssText = "display: flex; flex-direction: column; height: 100%; overflow: hidden;";
 
     // Update nav item active states
     const chatNav = document.querySelector('.nav-item[href="/chat"]') 
@@ -189,11 +187,12 @@
 
   function showChatView() {
     const main = document.querySelector("main.content");
-    const ideFrame = document.getElementById("better-gateway-ide-frame");
 
-    // Show main content, hide IDE
-    if (main) main.style.display = "";
-    if (ideFrame) ideFrame.style.display = "none";
+    // Restore original content
+    if (main && main.dataset.originalContent) {
+      main.innerHTML = main.dataset.originalContent;
+      main.style.cssText = "";
+    }
 
     // Update nav item active states
     const chatNav = document.querySelector('.nav-item[href="/chat"]') 
