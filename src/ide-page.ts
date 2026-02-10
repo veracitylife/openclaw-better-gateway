@@ -588,10 +588,10 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
             <h2>Better Gateway IDE</h2>
             <p>Open a file from the sidebar to start editing</p>
             <div class="shortcuts">
-              <div class="shortcut"><kbd>Ctrl+S</kbd> <span>Save file</span></div>
-              <div class="shortcut"><kbd>Ctrl+B</kbd> <span>Toggle sidebar</span></div>
-              <div class="shortcut"><kbd>Ctrl+P</kbd> <span>Quick open</span></div>
-              <div class="shortcut"><kbd>Ctrl+W</kbd> <span>Close tab</span></div>
+              <div class="shortcut"><kbd>⌘/Ctrl+S</kbd> <span>Save file</span></div>
+              <div class="shortcut"><kbd>⌘/Ctrl+B</kbd> <span>Toggle sidebar</span></div>
+              <div class="shortcut"><kbd>⌘/Ctrl+P</kbd> <span>Quick open</span></div>
+              <div class="shortcut"><kbd>⌘/Ctrl+W</kbd> <span>Close tab</span></div>
             </div>
           </div>
         </div>
@@ -1109,36 +1109,39 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
     
     function setupKeyboardShortcuts() {
       document.addEventListener('keydown', (e) => {
-        // Ctrl+S - Save
-        if (e.ctrlKey && e.key === 's') {
+        // Use Cmd on Mac, Ctrl on Windows/Linux
+        const modKey = e.metaKey || e.ctrlKey;
+        
+        // Cmd/Ctrl+S - Save
+        if (modKey && e.key === 's') {
           e.preventDefault();
           saveCurrentFile();
         }
         
-        // Ctrl+B - Toggle sidebar
-        if (e.ctrlKey && e.key === 'b') {
+        // Cmd/Ctrl+B - Toggle sidebar
+        if (modKey && e.key === 'b') {
           e.preventDefault();
           elements.sidebar.classList.toggle('collapsed');
         }
         
-        // Ctrl+W - Close tab
-        if (e.ctrlKey && e.key === 'w') {
+        // Cmd/Ctrl+W - Close tab
+        if (modKey && e.key === 'w') {
           e.preventDefault();
           if (state.activeTab) {
             closeTab(state.activeTab);
           }
         }
         
-        // Ctrl+P - Focus file search / Quick open
-        if (e.ctrlKey && e.key === 'p') {
+        // Cmd/Ctrl+P - Focus file search / Quick open
+        if (modKey && e.key === 'p') {
           e.preventDefault();
           elements.sidebar.classList.remove('collapsed');
           elements.fileSearch.focus();
           elements.fileSearch.select();
         }
         
-        // Ctrl+Tab - Next tab
-        if (e.ctrlKey && e.key === 'Tab' && !e.shiftKey) {
+        // Cmd/Ctrl+Tab - Next tab
+        if (modKey && e.key === 'Tab' && !e.shiftKey) {
           e.preventDefault();
           if (state.openTabs.length > 1) {
             const idx = state.openTabs.indexOf(state.activeTab);
@@ -1147,8 +1150,8 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           }
         }
         
-        // Ctrl+Shift+Tab - Previous tab
-        if (e.ctrlKey && e.shiftKey && e.key === 'Tab') {
+        // Cmd/Ctrl+Shift+Tab - Previous tab
+        if (modKey && e.shiftKey && e.key === 'Tab') {
           e.preventDefault();
           if (state.openTabs.length > 1) {
             const idx = state.openTabs.indexOf(state.activeTab);
