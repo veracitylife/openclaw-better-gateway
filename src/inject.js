@@ -176,7 +176,8 @@
     ideFrame.style.display = "block";
 
     // Update nav item active states
-    const chatNav = document.querySelector('.nav-item[href="/chat"]');
+    const chatNav = document.querySelector('.nav-item[href="/chat"]') 
+      || document.querySelector('.nav-item[href="/better-gateway/chat"]');
     const ideNav = document.getElementById("better-gateway-ide-nav");
     
     if (chatNav) chatNav.classList.remove("active");
@@ -195,7 +196,8 @@
     if (ideFrame) ideFrame.style.display = "none";
 
     // Update nav item active states
-    const chatNav = document.querySelector('.nav-item[href="/chat"]');
+    const chatNav = document.querySelector('.nav-item[href="/chat"]') 
+      || document.querySelector('.nav-item[href="/better-gateway/chat"]');
     const ideNav = document.getElementById("better-gateway-ide-nav");
     
     if (chatNav) chatNav.classList.add("active");
@@ -221,7 +223,9 @@
 
     // Find the Chat section's nav-group__items container
     // The gateway structure is: .nav-group > .nav-group__items > .nav-item[href="/chat"]
-    const chatLink = document.querySelector('.nav-item[href="/chat"]');
+    // Note: When accessed via /better-gateway/, links become /better-gateway/chat
+    const chatLink = document.querySelector('.nav-item[href="/chat"]') 
+      || document.querySelector('.nav-item[href="/better-gateway/chat"]');
     if (!chatLink) {
       return false;
     }
