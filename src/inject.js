@@ -155,23 +155,20 @@
     const main = document.querySelector("main.content");
     if (!main) return;
 
-    // Store original content if not already stored
-    if (!main.dataset.originalContent) {
-      main.dataset.originalContent = main.innerHTML;
-    }
-
-    // Create or get the IDE frame
+    // Create IDE frame if it doesn't exist
     let ideFrame = document.getElementById("better-gateway-ide-frame");
     if (!ideFrame) {
       ideFrame = createIdeFrame();
+      ideFrame.style.display = "none";
+      main.parentNode.insertBefore(ideFrame, main.nextSibling);
     }
 
-    // Replace main content with iframe
-    main.innerHTML = "";
-    main.appendChild(ideFrame);
-    
-    // Make main fill available space
-    main.style.cssText = "display: flex; flex-direction: column; height: 100%; overflow: hidden;";
+    // Hide main content, show IDE frame
+    main.style.display = "none";
+    ideFrame.style.display = "block";
+    ideFrame.style.width = "100%";
+    ideFrame.style.height = "100%";
+    ideFrame.style.flex = "1";
 
     // Update nav item active states
     const chatNav = document.querySelector('.nav-item[href="/chat"]') 
@@ -187,12 +184,11 @@
 
   function showChatView() {
     const main = document.querySelector("main.content");
+    const ideFrame = document.getElementById("better-gateway-ide-frame");
 
-    // Restore original content
-    if (main && main.dataset.originalContent) {
-      main.innerHTML = main.dataset.originalContent;
-      main.style.cssText = "";
-    }
+    // Show main content, hide IDE frame
+    if (main) main.style.display = "";
+    if (ideFrame) ideFrame.style.display = "none";
 
     // Update nav item active states
     const chatNav = document.querySelector('.nav-item[href="/chat"]') 

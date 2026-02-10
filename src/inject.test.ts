@@ -390,33 +390,35 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       expect(ideFrame?.getAttribute("src")).toBe("/better-gateway/ide");
     });
 
-    it("should replace main content with iframe when IDE view is shown", () => {
+    it("should hide main and show iframe when IDE view is shown", () => {
       const { main } = createGatewaySidebar();
       window.eval(injectScript);
       
       const ideNav = window.document.getElementById("better-gateway-ide-nav");
       ideNav?.click();
       
-      // Main should contain the iframe now
+      // Main should be hidden, iframe should be visible
+      expect(main.style.display).toBe("none");
       const ideFrame = window.document.getElementById("better-gateway-ide-frame");
       expect(ideFrame).not.toBeNull();
-      expect(main.contains(ideFrame)).toBe(true);
+      expect(ideFrame?.style.display).toBe("block");
     });
 
-    it("should restore original content when switching back to Chat", () => {
+    it("should show main and hide iframe when switching back to Chat", () => {
       const { main } = createGatewaySidebar();
-      const originalContent = main.innerHTML;
       window.eval(injectScript);
       
       const ideNav = window.document.getElementById("better-gateway-ide-nav");
       
       // Switch to IDE
       ideNav?.click();
-      expect(main.innerHTML).not.toBe(originalContent);
+      expect(main.style.display).toBe("none");
       
       // Switch back to Chat
       ideNav?.click();
-      expect(main.innerHTML).toBe(originalContent);
+      expect(main.style.display).toBe("");
+      const ideFrame = window.document.getElementById("better-gateway-ide-frame");
+      expect(ideFrame?.style.display).toBe("none");
     });
 
     it("should update active class when switching views", () => {
