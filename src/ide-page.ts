@@ -244,10 +244,27 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       border-bottom: 1px solid var(--border-color);
       max-height: 180px;
       overflow-y: auto;
+      padding: 4px 0;
     }
 
-    #open-editors:empty {
+    #open-editors-header {
+      padding: 4px 12px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    #open-editors.empty .open-editor-empty {
+      display: block;
+    }
+
+    .open-editor-empty {
       display: none;
+      padding: 4px 12px 8px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
     }
 
     .open-editor-item {
@@ -632,7 +649,10 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         <div id="file-search-container">
           <input type="text" id="file-search" placeholder="Search files... (Ctrl+P)" />
         </div>
-        <div id="open-editors"></div>
+        <div id="open-editors" class="empty">
+          <div id="open-editors-header">Open Editors</div>
+          <div class="open-editor-empty">No open files</div>
+        </div>
         <div id="file-tree"></div>
       </div>
       
@@ -904,7 +924,21 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       const container = elements.openEditors;
       container.innerHTML = '';
       
-      if (state.openTabs.length === 0) return;
+      const header = document.createElement('div');
+      header.id = 'open-editors-header';
+      header.textContent = 'Open Editors';
+      container.appendChild(header);
+      
+      if (state.openTabs.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'open-editor-empty';
+        empty.textContent = 'No open files';
+        container.classList.add('empty');
+        container.appendChild(empty);
+        return;
+      }
+      
+      container.classList.remove('empty');
       
       for (const path of state.openTabs) {
         const item = document.createElement('div');
