@@ -458,10 +458,72 @@
     mentionRange: null,
     pendingPayloadRefs: null,
     suppressNextSubmit: false,
+    mode: "composing",
+    selectionEpoch: 0,
+    sendBlockedUntil: 0,
+    debug: Boolean(window.__BETTER_GATEWAY_DEBUG_MENTIONS__),
   };
 
   const FILE_CONTEXT_CHAR_LIMIT = 6000;
   const TOTAL_CONTEXT_CHAR_LIMIT = 18000;
+  const ENTER_SEND_BLOCK_WINDOW_MS = 150;
+
+  function mentionDebug(event, details) {
+    if (!mentionState.debug || !console || typeof console.debug !== "function") return;
+    console.debug("[BetterGateway][mentions]", event, details || {});
+  }
+
+  function beginMentionSelection(reason) {
+    mentionState.mode = "mentionSelecting";
+    mentionState.selectionEpoch += 1;
+    mentionState.sendBlockedUntil = Date.now() + ENTER_SEND_BLOCK_WINDOW_MS;
+    mentionDebug("mode:mentionSelecting", { reason, epoch: mentionState.selectionEpoch });
+    return mentionState.selectionEpoch;
+  }
+
+  function endMentionSelection(epoch, reason) {
+    setTimeout(function () {
+      if (epoch !== mentionState.selectionEpoch) return;
+      mentionState.mode = "composing";
+      mentionState.sendBlockedUntil = 0;
+      mentionDebug("mode:composing", { reason, epoch });
+    }, 0);
+  }
+
+  function isSendBlockedForMentionSelection() {
+    if (mentionState.mode === "mentionSelecting") return true;
+    return mentionState.sendBlockedUntil > Date.now();
+  }
+
+  function resolveMentionByEnter(textarea, source) {
+    const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
+    if (!mentionState.pickerOpen && !liveRange) return false;
+
+    mentionState.textarea = textarea;
+    if (!mentionState.pickerOpen && liveRange) {
+      refreshMentionPicker();
+    }
+
+    const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
+    if (!selected) return false;
+
+    const epoch = beginMentionSelection(source);
+    mentionState.suppressNextSubmit = true;
+    setTimeout(function () {
+      mentionState.suppressNextSubmit = false;
+    }, 0);
+
+    selectMentionFile(selected.path);
+    endMentionSelection(epoch, source + ":resolved");
+    return true;
+  }
+
+  function blockEvent(event, reason) {
+    mentionDebug("block-event", { type: event.type, reason });
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+  }
 
   function escapeHtml(value) {
     return String(value || "")
@@ -752,6 +814,12 @@
     textarea.addEventListener("click", refreshMentionPicker);
     textarea.addEventListener("keydown", function (event) {
       const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
+      mentionDebug("textarea:keydown", {
+        key: event.key,
+        shiftKey: event.shiftKey,
+        pickerOpen: mentionState.pickerOpen,
+        hasRange: Boolean(liveRange),
+      });
 
       if (event.key === "ArrowDown" && mentionState.pickerOpen) {
         event.preventDefault();
@@ -772,23 +840,10 @@
       }
 
       if (event.key === "Enter" && !event.shiftKey && (mentionState.pickerOpen || liveRange)) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-        mentionState.suppressNextSubmit = true;
-        setTimeout(function () {
-          mentionState.suppressNextSubmit = false;
-        }, 0);
-
-        if (!mentionState.pickerOpen) {
-          refreshMentionPicker();
+        if (resolveMentionByEnter(textarea, "textarea-keydown")) {
+          blockEvent(event, "textarea-enter-select");
+          return;
         }
-
-        const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
-        if (selected) {
-          selectMentionFile(selected.path);
-        }
-        return;
       }
 
       if (event.key === "Backspace" && !textarea.value && mentionState.selected.length > 0) {
@@ -798,6 +853,10 @@
       }
 
       if (event.key === "Enter" && !event.shiftKey) {
+        if (isSendBlockedForMentionSelection()) {
+          blockEvent(event, "textarea-enter-blocked");
+          return;
+        }
         queuePendingRefsForNextSend();
       }
     }, true);
@@ -805,19 +864,19 @@
     const form = textarea.closest("form");
     if (form) {
       form.addEventListener("submit", function (event) {
-        const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
-        if (mentionState.suppressNextSubmit || mentionState.pickerOpen || liveRange) {
+        mentionDebug("form:submit", {
+          suppressNextSubmit: mentionState.suppressNextSubmit,
+          mode: mentionState.mode,
+          blocked: isSendBlockedForMentionSelection(),
+        });
+        if (mentionState.suppressNextSubmit || isSendBlockedForMentionSelection()) {
           mentionState.suppressNextSubmit = false;
-          if (!mentionState.pickerOpen && liveRange) {
-            refreshMentionPicker();
-          }
-          const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
-          if (selected) {
-            selectMentionFile(selected.path);
-          }
-          event.preventDefault();
-          event.stopPropagation();
+          blockEvent(event, "form-submit-blocked");
           return;
+        }
+        const liveRange = findMentionRange(textarea.value, textarea.selectionStart || 0);
+        if (mentionState.pickerOpen && !liveRange) {
+          closeMentionPicker();
         }
         queuePendingRefsForNextSend();
       }, true);
@@ -825,9 +884,14 @@
 
     const sendButton = mentionState.composer.querySelector('button[type="submit"]');
     if (sendButton) {
-      sendButton.addEventListener("click", function () {
+      sendButton.addEventListener("click", function (event) {
+        mentionDebug("send-button:click", { blocked: isSendBlockedForMentionSelection(), mode: mentionState.mode });
+        if (isSendBlockedForMentionSelection()) {
+          blockEvent(event, "send-click-blocked");
+          return;
+        }
         queuePendingRefsForNextSend();
-      });
+      }, true);
     }
 
     renderMentionChips();
@@ -837,7 +901,8 @@
     if (attachGlobalMentionGuards._installed) return;
     attachGlobalMentionGuards._installed = true;
 
-    document.addEventListener("keydown", function (event) {
+    window.addEventListener("keydown", function (event) {
+      mentionDebug("global:keydown", { key: event.key, target: event.target && event.target.tagName });
       if (event.key !== "Enter" || event.shiftKey) return;
       const target = event.target;
       if (!target || target.tagName !== "TEXTAREA") return;
@@ -845,21 +910,26 @@
       const inMain = textarea.closest && textarea.closest("main.content");
       if (!inMain) return;
 
-      const range = findMentionRange(textarea.value, textarea.selectionStart || textarea.value.length);
-      if (!range && !mentionState.pickerOpen) return;
+      if (resolveMentionByEnter(textarea, "global-keydown")) {
+        blockEvent(event, "global-enter-select");
+        return;
+      }
 
-      mentionState.textarea = textarea;
-      if (!mentionState.pickerOpen) refreshMentionPicker();
-      const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
-      if (!selected) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-      selectMentionFile(selected.path);
+      if (isSendBlockedForMentionSelection()) {
+        blockEvent(event, "global-enter-blocked");
+      }
     }, true);
 
-    document.addEventListener("submit", function (event) {
+    window.addEventListener("keypress", function (event) {
+      mentionDebug("global:keypress", { key: event.key, target: event.target && event.target.tagName });
+    }, true);
+
+    window.addEventListener("keyup", function (event) {
+      mentionDebug("global:keyup", { key: event.key, target: event.target && event.target.tagName });
+    }, true);
+
+    window.addEventListener("submit", function (event) {
+      mentionDebug("global:submit", { target: event.target && event.target.tagName, blocked: isSendBlockedForMentionSelection() });
       const form = event.target;
       if (!form || !form.querySelector) return;
       const textarea = form.querySelector("textarea");
@@ -867,18 +937,10 @@
       const inMain = textarea.closest && textarea.closest("main.content");
       if (!inMain) return;
 
-      const range = findMentionRange(textarea.value, textarea.selectionStart || textarea.value.length);
-      if (!range && !mentionState.pickerOpen) return;
-
-      mentionState.textarea = textarea;
-      if (!mentionState.pickerOpen) refreshMentionPicker();
-      const selected = mentionState.pickerItems[mentionState.activeIndex] || mentionState.pickerItems[0];
-      if (!selected) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-      selectMentionFile(selected.path);
+      if (mentionState.suppressNextSubmit || isSendBlockedForMentionSelection()) {
+        mentionState.suppressNextSubmit = false;
+        blockEvent(event, "global-submit-blocked");
+      }
     }, true);
   }
 
@@ -942,6 +1004,10 @@
             if (typeof data === "string") {
               const frame = JSON.parse(data);
               if (frame && frame.type === "req" && frame.method === "chat.send" && frame.params) {
+                if (isSendBlockedForMentionSelection()) {
+                  mentionDebug("ws:send-blocked", { reason: "mention-selection", method: frame.method });
+                  return;
+                }
                 const fileRefs = consumePendingFileRefs();
                 if (fileRefs.length > 0) {
                   if (typeof frame.params.message === "string") {
