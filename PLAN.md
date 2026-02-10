@@ -360,20 +360,37 @@ better-gateway-dev/
    - Matches VS Code dark theme (vs-dark)
    - Uses gateway accent colors
    - Consistent font families
-9. [x] Keyboard shortcuts (Ctrl+S save, etc.) ✅ **DONE**
-   - Ctrl+S: Save file
-   - Ctrl+B: Toggle sidebar
-   - Ctrl+W: Close tab
-   - Ctrl+P: Quick file search
-   - Ctrl+Tab: Next tab
-   - Ctrl+Shift+Tab: Previous tab
+9. [x] Keyboard shortcuts ✅ **DONE**
+   - ⌘/Ctrl+S: Save file
+   - ⌘/Ctrl+B: Toggle sidebar
+   - ⌘/Ctrl+W: Close tab
+   - ⌘/Ctrl+P: Quick file search
+   - ⌘/Ctrl+Tab: Next tab
+   - ⌘/Ctrl+Shift+Tab: Previous tab
    - Escape: Clear search / hide context menu
 10. [x] localStorage state persistence ✅ **DONE**
    - Open tabs persist across refreshes
    - Active tab remembered
    - Editor view state (cursor, scroll) preserved
 
-### Week 3: Chat Integration
+---
+
+### ✅ Phase 1 Complete (2026-02-09)
+
+**Summary:** Full IDE embedded in gateway with file explorer, Monaco editor, and seamless navigation.
+
+**Key Implementation Details:**
+- IDE iframe inserted as sibling to `<main>` (not inside) to preserve SPA routing
+- Main content hidden (not replaced) when IDE active
+- All nav item clicks restore main content before navigation
+- Chat link click intercepted to toggle back without page reload
+- Supports both ⌘ (Mac) and Ctrl (Windows/Linux) for shortcuts
+
+**Test Coverage:** 106 tests passing
+
+---
+
+### Week 3: Chat Integration (Phase 2)
 11. [ ] `@file` mention autocomplete
 12. [ ] File content injection in messages
 13. [ ] Real-time file change updates
