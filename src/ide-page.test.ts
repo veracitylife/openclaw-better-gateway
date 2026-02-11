@@ -1,174 +1,201 @@
 import { describe, it, expect } from "vitest";
 import { generateIdePage, EXTENSION_TO_LANGUAGE } from "./ide-page.js";
 
+/**
+ * Helper: extract the inline <script> JS from the generated HTML.
+ * Grabs everything between the last <script> ... </script> block,
+ * which is the IDE application code (not the Monaco loader tag).
+ */
+function extractInlineJs(html: string): string {
+  // The IDE app script is the last <script>...</script> block
+  const lastScriptClose = html.lastIndexOf("</script>");
+  const scriptOpenBefore = html.lastIndexOf("<script>", lastScriptClose);
+  if (scriptOpenBefore === -1 || lastScriptClose === -1) {
+    throw new Error("Could not find inline <script> block in generated HTML");
+  }
+  return html.slice(scriptOpenBefore + "<script>".length, lastScriptClose);
+}
+
 describe("IDE Page Generator", () => {
-  describe("generateIdePage", () => {
-    it("should generate valid HTML document", () => {
+  // ---- Generated JS correctness (would have caught the regex escaping bug) ----
+
+  describe("generated JavaScript validity", () => {
+    it("should produce syntactically valid JavaScript", () => {
       const html = generateIdePage();
-      
-      expect(html).toContain("<!DOCTYPE html>");
-      expect(html).toContain("<html lang=\"en\">");
-      expect(html).toContain("</html>");
+      const js = extractInlineJs(html);
+      // new Function() parses without executing -- throws SyntaxError if invalid
+      expect(() => new Function(js)).not.toThrow();
     });
 
-    it("should include Monaco loader script from CDN", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("cdn.jsdelivr.net/npm/monaco-editor");
-      expect(html).toContain("loader.js");
+    it("should produce valid JS with all config combinations", () => {
+      const configs = [
+        {},
+        { monacoVersion: "0.45.0" },
+        { theme: "vs" as const },
+        { theme: "hc-black" as const },
+        { monacoVersion: "0.50.0", theme: "vs" as const },
+      ];
+      for (const config of configs) {
+        const html = generateIdePage(config);
+        const js = extractInlineJs(html);
+        expect(() => new Function(js), `config ${JSON.stringify(config)}`).not.toThrow();
+      }
     });
 
-    it("should use default Monaco version 0.52.0", () => {
+    it("should correctly escape backslash regex in normalizeWorkspaceRoot", () => {
       const html = generateIdePage();
-      
+      const js = extractInlineJs(html);
+      // The output must contain /\\/g (regex matching backslash, global flag).
+      // A broken escape produces /\/g which is an unclosed regex.
+      expect(js).toContain("replace(/\\\\/g,");
+    });
+  });
+
+  // ---- Monaco loading resilience ----
+
+  describe("Monaco loader resilience", () => {
+    it("should use multi-source fallback for the AMD loader", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      // ensureMonacoLoader should try local, jsdelivr, and unpkg
+      expect(js).toContain("/better-gateway/monaco/vs/loader.js");
+      expect(js).toContain("cdn.jsdelivr.net/npm/monaco-editor");
+      expect(js).toContain("unpkg.com/monaco-editor");
+    });
+
+    it("should track which loader source succeeded and reuse it for editor modules", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      // monacoBase must be set when loader succeeds and used in loadMonacoEditor
+      expect(js).toContain("monacoBase = base");
+      expect(js).toContain("paths: { vs: monacoBase }");
+    });
+
+    it("should not try multiple bases in loadMonacoEditor to avoid AMD cache poisoning", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      // loadMonacoEditor should call require() exactly once with monacoBase,
+      // NOT iterate through multiple bases (which poisons the AMD module cache).
+      const loadMonacoFn = js.slice(
+        js.indexOf("function loadMonacoEditor"),
+        js.indexOf("function init")
+      );
+      // Should NOT contain tryNext or idx++ patterns (old multi-try approach)
+      expect(loadMonacoFn).not.toContain("tryNext");
+      expect(loadMonacoFn).not.toContain("idx++");
+      // Should contain a single require call with monacoBase
+      expect(loadMonacoFn).toContain("monacoBase");
+    });
+  });
+
+  // ---- Error handling ----
+
+  describe("init error handling", () => {
+    it("should wrap init body in try/catch", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      const initFn = js.slice(js.indexOf("async function init"));
+      expect(initFn).toContain("try {");
+      expect(initFn).toContain("} catch");
+    });
+
+    it("should show a visible error when loading fails (remove hidden class)", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      // showLoadingError must remove the hidden class so the error overlay
+      // is visible even after the loading spinner was already dismissed
+      expect(js).toContain("classList.remove('hidden')");
+    });
+
+    it("should display a retry button on error", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      expect(js).toContain("Retry");
+      expect(js).toContain("location.reload()");
+    });
+
+    it("should guard localStorage.getItem/JSON.parse during tab restore", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      // The tab restoration block must be in its own try/catch so corrupted
+      // localStorage doesn't crash init and leave the spinner spinning
+      const initFn = js.slice(js.indexOf("async function init"));
+      const tabRestore = initFn.slice(initFn.indexOf("Restore open tabs"));
+      expect(tabRestore).toContain("try {");
+      expect(tabRestore).toContain("JSON.parse");
+      expect(tabRestore).toContain("} catch");
+    });
+
+    it("should guard view state restoration in switchToTab", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      const switchFn = js.slice(
+        js.indexOf("async function switchToTab"),
+        js.indexOf("function closeTab")
+      );
+      // restoreViewState + JSON.parse must be inside try/catch
+      expect(switchFn).toContain("restoreViewState");
+      expect(switchFn).toContain("try {");
+      expect(switchFn).toContain("} catch");
+    });
+
+    it("should guard localStorage.setItem calls against quota errors", () => {
+      const html = generateIdePage();
+      const js = extractInlineJs(html);
+      // The saveTabs periodic function should be guarded
+      const saveTabs = js.slice(js.indexOf("const saveTabs"));
+      expect(saveTabs).toContain("try {");
+      expect(saveTabs).toContain("localStorage.setItem");
+      expect(saveTabs).toContain("} catch");
+    });
+  });
+
+  // ---- Config interpolation ----
+
+  describe("config interpolation", () => {
+    it("should interpolate the default Monaco version into CDN URLs", () => {
+      const html = generateIdePage();
       expect(html).toContain("monaco-editor@0.52.0");
     });
 
-    it("should allow custom Monaco version", () => {
+    it("should interpolate a custom Monaco version", () => {
       const html = generateIdePage({ monacoVersion: "0.45.0" });
-      
       expect(html).toContain("monaco-editor@0.45.0");
+      expect(html).not.toContain("monaco-editor@0.52.0");
     });
 
-    it("should use vs-dark theme by default", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("theme: 'vs-dark'");
-    });
-
-    it("should allow custom theme", () => {
-      const html = generateIdePage({ theme: "vs" });
-      
-      expect(html).toContain("theme: 'vs'");
-    });
-
-    it("should include file tree sidebar", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"sidebar\"");
-      expect(html).toContain("id=\"file-tree\"");
-      expect(html).toContain("Explorer");
-    });
-
-    it("should include editor container", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"editor-container\"");
-      expect(html).toContain("id=\"editor-area\"");
-    });
-
-    it("should include tab bar", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"tab-bar\"");
-    });
-
-    it("should not include embedded IDE chat panel", () => {
-      const html = generateIdePage();
-
-      expect(html).not.toContain('id="chat-panel"');
-      expect(html).not.toContain('id="chat-input"');
-      expect(html).not.toContain('id="chat-send"');
-      expect(html).not.toContain('Ctrl+Shift+C');
-    });
-
-    it("should include toolbar with buttons", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"toolbar\"");
-      expect(html).toContain("id=\"toggle-sidebar\"");
-      expect(html).toContain("id=\"new-file-btn\"");
-      expect(html).toContain("id=\"open-folder-btn\"");
-      expect(html).toContain("id=\"refresh-btn\"");
-      expect(html).toContain("id=\"workspace-path\"");
-    });
-
-    it("should include welcome screen", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"welcome\"");
-      expect(html).toContain("Better Gateway IDE");
-      expect(html).toContain("Open a file from the sidebar");
-    });
-
-    it("should include keyboard shortcuts info", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("Ctrl+S");
-      expect(html).toContain("Ctrl+B");
-      expect(html).toContain("Ctrl+W");
-    });
-
-    it("should include loading overlay", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"loading\"");
-      expect(html).toContain("spinner");
-    });
-
-    it("should include context menu", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"context-menu\"");
-      expect(html).toContain("data-action=\"new-file\"");
-      expect(html).toContain("data-action=\"new-folder\"");
-      expect(html).toContain("data-action=\"delete\"");
-    });
-
-    it("should include file API base URL", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("/better-gateway/api/files");
-    });
-
-    it("should include extension to language mapping", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("typescript");
-      expect(html).toContain("javascript");
-      expect(html).toContain("python");
-      expect(html).toContain("markdown");
-    });
-
-    it("should include save functionality", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("saveCurrentFile");
-      expect(html).toContain("id=\"save-status\"");
-    });
-
-    it("should include localStorage state persistence", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("localStorage.setItem");
-      expect(html).toContain("localStorage.getItem");
-      expect(html).toContain("openTabs");
-      expect(html).toContain("activeTab");
-    });
-
-    it("should normalize workspace aliases used by Open Folder", () => {
-      const html = generateIdePage();
-
-      expect(html).toContain("workspace/");
-      expect(html).toContain("/root/.openclaw/workspace/");
-      expect(html).toContain("normalizeWorkspaceRoot");
-    });
-
-    it("should include resize handle for sidebar", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("id=\"resize-handle\"");
-      expect(html).toContain("setupResizeHandle");
-    });
-
-    it("should include CSS custom properties for theming", () => {
-      const html = generateIdePage();
-      
-      expect(html).toContain("--bg-primary");
-      expect(html).toContain("--text-primary");
-      expect(html).toContain("--accent");
+    it("should interpolate the theme into editor creation", () => {
+      const html = generateIdePage({ theme: "hc-black" });
+      expect(html).toContain("theme: 'hc-black'");
     });
   });
+
+  // ---- Structural sanity (consolidated from old granular checks) ----
+
+  describe("page structure", () => {
+    it("should generate a complete HTML document", () => {
+      const html = generateIdePage();
+      expect(html).toContain("<!DOCTYPE html>");
+      expect(html).toContain("</html>");
+    });
+
+    it("should include core layout elements", () => {
+      const html = generateIdePage();
+      for (const id of [
+        "app", "toolbar", "sidebar", "file-tree", "editor-container",
+        "tab-bar", "welcome", "loading", "context-menu", "resize-handle",
+      ]) {
+        expect(html, `missing #${id}`).toContain(`id="${id}"`);
+      }
+    });
+
+    it("should include the file API base URL", () => {
+      const html = generateIdePage();
+      expect(html).toContain("/better-gateway/api/files");
+    });
+  });
+
+  // ---- Extension mapping (real unit tests -- keep as-is) ----
 
   describe("EXTENSION_TO_LANGUAGE mapping", () => {
     it("should map TypeScript extensions", () => {

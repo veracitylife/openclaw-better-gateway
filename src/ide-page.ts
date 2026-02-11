@@ -1486,22 +1486,30 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
       });
     }
 
+    // Track which source provided the loader so editor modules use the same origin.
+    // The AMD loader caches module state by name, so switching the base path after
+    // a failed require() won't retry -- the cached failure is returned immediately.
+    let monacoBase = '';
+
     async function ensureMonacoLoader() {
       if (window.require) return;
       const sources = [
-        '/better-gateway/monaco/vs/loader.js',
-        'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs/loader.js',
-        'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs/loader.js',
+        { loader: '/better-gateway/monaco/vs/loader.js', base: '/better-gateway/monaco/vs' },
+        { loader: 'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs/loader.js', base: 'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs' },
+        { loader: 'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs/loader.js', base: 'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs' },
       ];
 
       let lastError = null;
-      for (const src of sources) {
+      for (const { loader, base } of sources) {
         try {
-          await loadScript(src);
-          if (window.require) return;
+          await loadScript(loader);
+          if (window.require) {
+            monacoBase = base;
+            return;
+          }
         } catch (err) {
           lastError = err;
-          console.warn('Monaco loader source failed:', src, err);
+          console.warn('Monaco loader source failed:', loader, err);
         }
       }
 
@@ -1515,28 +1523,16 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           return;
         }
 
-        const bases = [
-          '/better-gateway/monaco/vs',
-          'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs',
-          'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs',
-        ];
+        if (!monacoBase) {
+          reject(new Error('Monaco base path not resolved'));
+          return;
+        }
 
-        let idx = 0;
-        const tryNext = (lastErr) => {
-          if (idx >= bases.length) {
-            reject(lastErr || new Error('Unable to load Monaco editor bundle'));
-            return;
-          }
-
-          const base = bases[idx++];
-          window.require.config({ paths: { vs: base } });
-          window.require(['vs/editor/editor.main'], () => resolve(), (err) => {
-            console.warn('Monaco editor source failed:', base, err);
-            tryNext(err);
-          });
-        };
-
-        tryNext(null);
+        window.require.config({ paths: { vs: monacoBase } });
+        window.require(['vs/editor/editor.main'], () => resolve(), (err) => {
+          console.error('Monaco editor failed to load from:', monacoBase, err);
+          reject(err || new Error('Unable to load Monaco editor bundle'));
+        });
       });
     }
 
