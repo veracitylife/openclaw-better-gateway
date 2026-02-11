@@ -1542,9 +1542,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         state.workspaceRoot = normalizeWorkspaceRoot(savedWorkspaceRoot || '/');
         updateWorkspacePathLabel();
 
-        // Load file tree
-        await refreshFileTree();
-        
         // Setup UI
         setupKeyboardShortcuts();
         setupResizeHandle();
@@ -1582,6 +1579,14 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           await refreshFileTree();
         });
         
+        // Load file tree in background (don't block IDE render)
+        refreshFileTree().catch(err => {
+          console.error('Initial file tree load failed:', err);
+        });
+
+        // Show editor shell immediately; async data can continue loading
+        elements.loading.classList.add('hidden');
+
         // Restore open tabs from localStorage
         const savedTabs = localStorage.getItem('openTabs');
         const savedActive = localStorage.getItem('activeTab');
@@ -1610,8 +1615,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         setInterval(saveTabs, 5000);
         window.addEventListener('beforeunload', saveTabs);
         
-        // Hide loading
-        elements.loading.classList.add('hidden');
       } catch (err) {
         console.error('IDE initialization failed:', err);
         showLoadingError((err && err.message) ? err.message : 'Network or browser policy blocked Monaco assets.');
