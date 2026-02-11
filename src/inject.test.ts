@@ -388,7 +388,7 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       const ideFrame = window.document.getElementById("better-gateway-ide-frame");
       expect(ideFrame).not.toBeNull();
       expect(ideFrame?.tagName).toBe("IFRAME");
-      expect(ideFrame?.getAttribute("src")).toBe("/better-gateway/ide");
+      expect(ideFrame?.getAttribute("src")).toContain("/better-gateway/ide");
     });
 
     it("should show split view (both main and iframe) when IDE nav is clicked", () => {

@@ -272,6 +272,9 @@ export default {
           res.writeHead(200, {
             "Content-Type": "text/html",
             "Content-Length": Buffer.byteLength(html),
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
           });
           res.end(html);
           api.logger.debug("Served IDE page");

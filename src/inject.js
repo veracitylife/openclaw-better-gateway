@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const INJECT_VERSION = "2026-02-10.8";
+  const INJECT_VERSION = "2026-02-11.1";
 
   const config = window.__BETTER_GATEWAY_CONFIG__ || {
     reconnectIntervalMs: 3000,
@@ -158,7 +158,7 @@
   function createIdeFrame() {
     const frame = document.createElement("iframe");
     frame.id = "better-gateway-ide-frame";
-    frame.src = "/better-gateway/ide";
+    frame.src = `/better-gateway/ide?v=${encodeURIComponent(INJECT_VERSION)}`;
     frame.style.cssText = `
       border: none;
       background: #1e1e1e;
