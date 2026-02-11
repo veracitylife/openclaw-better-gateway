@@ -1475,6 +1475,7 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
     async function ensureMonacoLoader() {
       if (window.require) return;
       const sources = [
+        '/better-gateway/monaco/vs/loader.js',
         'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs/loader.js',
         'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs/loader.js',
       ];
@@ -1500,11 +1501,28 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           return;
         }
 
-        window.require.config({
-          paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs' }
-        });
+        const bases = [
+          '/better-gateway/monaco/vs',
+          'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs',
+          'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs',
+        ];
 
-        window.require(['vs/editor/editor.main'], () => resolve(), (err) => reject(err));
+        let idx = 0;
+        const tryNext = (lastErr) => {
+          if (idx >= bases.length) {
+            reject(lastErr || new Error('Unable to load Monaco editor bundle'));
+            return;
+          }
+
+          const base = bases[idx++];
+          window.require.config({ paths: { vs: base } });
+          window.require(['vs/editor/editor.main'], () => resolve(), (err) => {
+            console.warn('Monaco editor source failed:', base, err);
+            tryNext(err);
+          });
+        };
+
+        tryNext(null);
       });
     }
 

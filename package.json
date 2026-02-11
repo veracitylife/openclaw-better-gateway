@@ -34,7 +34,9 @@
     "openclaw.plugin.json",
     "README.md"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "monaco-editor": "^0.52.0"
+  },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "jsdom": "^26.0.0",
