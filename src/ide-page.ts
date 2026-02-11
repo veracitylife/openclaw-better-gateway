@@ -739,7 +739,7 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
     
     function normalizeWorkspaceRoot(path) {
       if (!path || path === '/' || path === '.') return '/';
-      let normalized = String(path).trim().replace(/\\\\/g, '/');
+      let normalized = String(path).trim().split(String.fromCharCode(92)).join('/');
 
       // Accept absolute workspace paths (e.g. /root/.openclaw/workspace/projects/foo)
       const absWorkspacePrefix = '/root/.openclaw/workspace/';
