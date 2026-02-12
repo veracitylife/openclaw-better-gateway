@@ -54,13 +54,14 @@ describe("IDE Page Generator", () => {
   // ---- Monaco loading resilience ----
 
   describe("Monaco loader resilience", () => {
-    it("should use multi-source fallback for the AMD loader", () => {
+    it("should use CDN fallback sources for the AMD loader", () => {
       const html = generateIdePage();
       const js = extractInlineJs(html);
-      // ensureMonacoLoader should try local, jsdelivr, and unpkg
-      expect(js).toContain("/better-gateway/monaco/vs/loader.js");
+      // ensureMonacoLoader should try jsdelivr and unpkg CDNs
       expect(js).toContain("cdn.jsdelivr.net/npm/monaco-editor");
       expect(js).toContain("unpkg.com/monaco-editor");
+      // local Monaco assets should NOT be referenced (removed to reduce package size)
+      expect(js).not.toContain("/better-gateway/monaco/");
     });
 
     it("should track which loader source succeeded and reuse it for editor modules", () => {

@@ -1518,7 +1518,6 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
         return;
       }
       const sources = [
-        { loader: '/better-gateway/monaco/vs/loader.js', base: '/better-gateway/monaco/vs' },
         { loader: 'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs/loader.js', base: 'https://cdn.jsdelivr.net/npm/monaco-editor@${monacoVersion}/min/vs' },
         { loader: 'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs/loader.js', base: 'https://unpkg.com/monaco-editor@${monacoVersion}/min/vs' },
       ];
