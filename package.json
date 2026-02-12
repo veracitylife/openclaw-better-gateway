@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc && cp src/inject.js dist/inject.js",
+    "deploy": "npm run build && cp -r dist/* ../../../extensions/openclaw-better-gateway/dist/ && cp src/inject.js ../../../extensions/openclaw-better-gateway/dist/inject.js && echo 'Deployed to extensions. Restart gateway to apply.'",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "vitest run",
