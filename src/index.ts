@@ -269,8 +269,7 @@ export default {
       maxFileSize: config.maxFileSize,
     });
 
-    // Create terminal manager (PTY + WebSocket bridge)
-    // WS server starts eagerly — no lazy attach needed.
+    // Create terminal manager (PTY + SSE/POST bridge)
     const terminalManager = createTerminalManager(api.logger, workspaceDir);
 
     // Register the main HTTP handler for /better-gateway/* routes
@@ -307,22 +306,9 @@ export default {
           return true;
         }
 
-        // Serve terminal status (JSON health check for the frontend)
-        if (pathname === "/better-gateway/terminal/status") {
-          const status = await terminalManager.getStatus();
-          const body = JSON.stringify(status);
-          res.writeHead(200, {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(body),
-            "Cache-Control": "no-store",
-          });
-          res.end(body);
-          return true;
-        }
-
-        // Serve the terminal page
+        // Serve the terminal page (exact match only)
         if (pathname === "/better-gateway/terminal") {
-          const html = generateTerminalPage({ wsPort: terminalManager.wsPort });
+          const html = generateTerminalPage();
           res.writeHead(200, {
             "Content-Type": "text/html",
             "Content-Length": Buffer.byteLength(html),
@@ -333,6 +319,13 @@ export default {
           res.end(html);
           api.logger.debug("Served terminal page");
           return true;
+        }
+
+        // Terminal API sub-routes: /stream, /input, /resize
+        if (pathname.startsWith("/better-gateway/terminal/")) {
+          const subpath = pathname.slice("/better-gateway/terminal".length);
+          const handled = await terminalManager.handleRequest(req, res, subpath);
+          if (handled) return true;
         }
 
         // Serve the inject script

@@ -2,48 +2,42 @@
 
 ## Terminal Feature (feat/cli-terminal branch)
 
-### 🔴 Critical: Gateway intercepts all WebSocket upgrades
-**Status:** Workaround applied — using dedicated side port (18790)
+### 🟢 Gateway intercepts all WebSocket upgrades
+**Status:** Resolved — replaced WebSocket with SSE+POST
 
-The OpenClaw gateway's HTTP server has a global `upgrade` handler that catches ALL WebSocket connections before plugins can intercept them. Plugin `registerHttpHandler` only covers HTTP requests, not WS upgrades. There's no `registerUpgradeHandler` in the plugin API.
+The OpenClaw gateway's HTTP server has a global `upgrade` handler that catches ALL WebSocket connections before plugins can intercept them. Plugin `registerHttpHandler` only covers HTTP requests, not WS upgrades.
 
-**Workaround:** Terminal WebSocket runs on its own HTTP server at `127.0.0.1:18790`. Users connecting via SSH tunnel need to forward both ports (18789 + 18790).
+**Previous workaround:** Terminal WebSocket ran on a dedicated side port (18790), requiring users to forward both ports via SSH tunnel — a major usability issue.
 
-**Ideal fix:** OpenClaw adds a plugin API for registering WebSocket upgrade handlers (e.g. `api.registerUpgradeHandler(path, handler)`).
+**Fix applied:** Replaced the WebSocket transport entirely with **SSE + POST**:
+- `GET /better-gateway/terminal/stream` — Server-Sent Events for PTY output (server → browser)
+- `POST /better-gateway/terminal/input` — keystrokes (browser → server)
+- `POST /better-gateway/terminal/resize` — terminal resize events
+
+All routes go through `registerHttpHandler` on the main gateway port. No second port, no `ws` module, no extra SSH tunnel config.
 
 ---
 
-### 🟡 ws module import fails under jiti
-**Status:** Fixed with fallback detection
+### 🟢 ws module import fails under jiti
+**Status:** No longer applicable
 
-When OpenClaw loads plugins via jiti (its TypeScript/ESM loader), the `ws` module resolves differently than in a direct Node.js import. `mod.default` ends up being the raw WebSocket class with only constants (`CONNECTING`, `OPEN`, etc.) visible, not the full module with `WebSocketServer`.
-
-**Fix applied:** Brute-force search across `mod`, `mod.default`, `mod.default.default`, and fall back to `ws.Server` if `WebSocketServer` isn't found.
+The `ws` module has been removed entirely. The terminal now uses SSE+POST over plain HTTP, so there's no WebSocket dependency to resolve under jiti.
 
 ---
 
 ### 🟡 node-pty required but not bundled
-**Status:** Added as dependency
+**Status:** Added as optional dependency
 
-Terminal requires `node-pty` for PTY sessions. It's a native module that needs compilation. If missing, terminal shows "not available" but doesn't crash.
+Terminal requires `node-pty` for PTY sessions. It's a native module that needs compilation. If missing, the SSE stream sends an `error` event with a clear message — the terminal page shows "node-pty is not installed" instead of a cryptic disconnect.
 
-**Note:** `node-pty` is a runtime-only dependency — it won't be needed by users who don't use the terminal feature. Consider making it an optional peer dependency.
+**Note:** `node-pty` is listed in `optionalDependencies`. Multi-strategy `pluginImport()` tries `createRequire(import.meta.url)`, `createRequire(cwd)`, bare `import()`, and global paths to find it under jiti.
 
 ---
 
 ### 🟢 Terminal shows "Disconnected" in browser
 **Status:** Fixed
 
-Root cause was a **startup race condition**: `ensureAttached()` triggered the WS server lazily on the first HTTP request, but the terminal page loaded and tried to connect before the server was listening. Combined with zero diagnostic feedback, users just saw "Disconnected" with no explanation.
-
-**Fixes applied:**
-1. **Eager WS server startup** — `startWsServer()` is called immediately in `createTerminalManager()` instead of lazily. By the time a user loads the terminal page, the server is already listening.
-2. **Status endpoint** — `GET /better-gateway/terminal/status` returns JSON with `{ wsPort, wsReady, ptyAvailable }`. The frontend fetches this before opening the WebSocket.
-3. **Dynamic port** — WS port is passed from the server into the page HTML and confirmed via the status endpoint. No more hardcoded `18790` in the frontend.
-4. **Context-aware error messages** — Instead of generic "Disconnected", the terminal now shows:
-   - "node-pty not installed — run: npm install node-pty" if PTY is missing
-   - "WebSocket server not ready — check gateway logs" if WS server failed
-   - "Connection failed — if using SSH, forward port {port} too" after max retries
+The original issue had multiple causes: WebSocket side port not reachable, race conditions, and no diagnostic feedback. All resolved by the SSE+POST rewrite — the terminal now connects over the same port as everything else, and errors are reported inline.
 
 ---
 

@@ -1,26 +1,25 @@
 /**
  * Terminal Page Generator
  * Creates a full-featured browser terminal using xterm.js (CDN)
+ * connected via SSE (server→browser) + POST (browser→server).
  */
 
 export interface TerminalPageConfig {
   xtermVersion: string;
   fitAddonVersion: string;
   webLinksAddonVersion: string;
-  wsPort: number;
 }
 
 const DEFAULT_CONFIG: TerminalPageConfig = {
   xtermVersion: "5.3.0",
   fitAddonVersion: "0.8.0",
   webLinksAddonVersion: "0.9.0",
-  wsPort: 18790,
 };
 
 export function generateTerminalPage(
   config: Partial<TerminalPageConfig> = {},
 ): string {
-  const { xtermVersion, fitAddonVersion, webLinksAddonVersion, wsPort } = {
+  const { xtermVersion, fitAddonVersion, webLinksAddonVersion } = {
     ...DEFAULT_CONFIG,
     ...config,
   };
@@ -172,85 +171,147 @@ export function generateTerminalPage(
     }
     showSize();
 
-    // ---- WebSocket ----
-    var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Default WS port embedded from server; status endpoint confirms it.
-    var wsPort   = ${wsPort};
-    var wsUrl    = null;
-
-    var ws = null;
-    var reconnTimer = null;
-    var reconnAttempts = 0;
-    var MAX_RECONN = 10;
-    var RECONN_DELAY = 2000;
-
     function setStatus(cls, text) {
       statusBar.className = cls;
       connStatus.textContent = text;
     }
 
-    // Fetch server status to confirm WS readiness and get the actual port.
-    // Returns true if ready to connect, false otherwise (shows error in UI).
-    function checkStatus() {
-      return fetch('/better-gateway/terminal/status')
-        .then(function (r) { return r.json(); })
-        .then(function (status) {
-          if (!status.ptyAvailable) {
-            setStatus('disconnected',
-              'node-pty not installed \\u2014 run: npm install node-pty');
-            term.write(
-              '\\r\\n\\x1b[1;31m node-pty is not installed.\\x1b[0m\\r\\n' +
-              '\\x1b[90m Install it on the server: npm install node-pty\\x1b[0m\\r\\n');
-            return false;
-          }
-          if (!status.wsReady) {
-            setStatus('disconnected',
-              'WebSocket server not ready \\u2014 check gateway logs');
-            term.write(
-              '\\r\\n\\x1b[1;31m Terminal WebSocket server failed to start.\\x1b[0m\\r\\n' +
-              '\\x1b[90m Check: journalctl -u openclaw-gateway | grep -i terminal\\x1b[0m\\r\\n');
-            return false;
-          }
-          // Use the port reported by the server (overrides default)
-          wsPort = status.wsPort;
-          wsUrl = protocol + '//' + location.hostname + ':' + wsPort + '/terminal/ws';
-          return true;
-        })
-        .catch(function () {
-          // Status endpoint unreachable — fall back to direct connect
-          wsUrl = protocol + '//' + location.hostname + ':' + wsPort + '/terminal/ws';
-          return true;
-        });
+    // ---- SSE + POST transport ----
+    var STREAM_URL = '/better-gateway/terminal/stream';
+    var INPUT_URL  = '/better-gateway/terminal/input';
+    var RESIZE_URL = '/better-gateway/terminal/resize';
+
+    var sid = null;          // session ID from server
+    var evtSource = null;    // EventSource instance
+    var reconnAttempts = 0;
+    var MAX_RECONN = 10;
+    var RECONN_DELAY = 2000;
+    var reconnTimer = null;
+
+    // ---- input batching ----
+    // Buffer keystrokes and flush every 30ms to reduce POST overhead
+    var inputBuffer = '';
+    var inputTimer  = null;
+    var INPUT_FLUSH_MS = 30;
+
+    function flushInput() {
+      inputTimer = null;
+      if (!inputBuffer || !sid) return;
+      var payload = inputBuffer;
+      inputBuffer = '';
+      fetch(INPUT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sid: sid, data: payload }),
+      }).catch(function (err) {
+        console.warn('[terminal] input POST failed:', err);
+      });
     }
 
-    function connectWs() {
-      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    function sendInput(data) {
+      inputBuffer += data;
+      if (!inputTimer) {
+        inputTimer = setTimeout(flushInput, INPUT_FLUSH_MS);
+      }
+    }
+
+    function sendResize(cols, rows) {
+      if (!sid) return;
+      fetch(RESIZE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sid: sid, cols: cols, rows: rows }),
+      }).catch(function (err) {
+        console.warn('[terminal] resize POST failed:', err);
+      });
+    }
+
+    // ---- base64 decode helper ----
+    function b64decode(str) {
+      try {
+        // Use atob + TextDecoder for proper UTF-8 handling
+        var bytes = atob(str);
+        var arr = new Uint8Array(bytes.length);
+        for (var i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+        return new TextDecoder().decode(arr);
+      } catch (e) {
+        return str;
+      }
+    }
+
+    // ---- connect via SSE ----
+    function connect() {
+      if (evtSource) {
+        try { evtSource.close(); } catch (_e) {}
+      }
+      sid = null;
 
       setStatus('connecting',
         reconnAttempts > 0
           ? 'Reconnecting (' + reconnAttempts + '/' + MAX_RECONN + ')\\u2026'
           : 'Connecting\\u2026');
 
-      ws = new WebSocket(wsUrl);
+      evtSource = new EventSource(STREAM_URL);
 
-      ws.onopen = function () {
-        reconnAttempts = 0;
-        setStatus('', 'Connected');
-        // send initial size
-        var d = fitAddon.proposeDimensions();
-        if (d) ws.send(JSON.stringify({ type: 'resize', cols: d.cols, rows: d.rows }));
-      };
+      // Session ID (first event from server)
+      evtSource.addEventListener('session', function (ev) {
+        try {
+          var data = JSON.parse(ev.data);
+          sid = data.sid;
+          reconnAttempts = 0;
+          setStatus('', 'Connected');
+          console.log('[terminal] session:', sid);
+          // Send initial terminal size
+          var d = fitAddon.proposeDimensions();
+          if (d) sendResize(d.cols, d.rows);
+        } catch (e) {
+          console.warn('[terminal] bad session event:', e);
+        }
+      });
 
-      ws.onmessage = function (ev) { term.write(ev.data); };
+      // PTY output (default unnamed event) — base64 encoded
+      evtSource.addEventListener('message', function (ev) {
+        term.write(b64decode(ev.data));
+      });
 
-      ws.onclose = function () {
-        setStatus('disconnected', 'Disconnected');
+      // PTY exited
+      evtSource.addEventListener('exit', function (ev) {
+        try {
+          var data = JSON.parse(ev.data);
+          term.write(
+            '\\r\\n\\x1b[90m[Process exited with code ' + data.code + ']\\x1b[0m\\r\\n');
+        } catch (_e) {}
+        setStatus('disconnected', 'Process exited');
+        sid = null;
+        try { evtSource.close(); } catch (_e2) {}
+      });
+
+      // Server-sent error (e.g. node-pty not installed)
+      evtSource.addEventListener('error', function (ev) {
+        // EventSource fires 'error' for both server-sent error events
+        // and connection failures. Check if we got data.
+        if (ev.data) {
+          try {
+            var data = JSON.parse(ev.data);
+            var msg = data.error || 'Unknown server error';
+            setStatus('disconnected', msg);
+            term.write('\\r\\n\\x1b[1;31m ' + msg + '\\x1b[0m\\r\\n');
+            try { evtSource.close(); } catch (_e) {}
+            return;
+          } catch (_e) {}
+        }
+
+        // Connection-level error — attempt reconnect
+        try { evtSource.close(); } catch (_e) {}
+        sid = null;
         if (reconnAttempts < MAX_RECONN) {
           reconnAttempts++;
+          setStatus('disconnected',
+            'Disconnected \\u2014 retry ' + reconnAttempts + '/' + MAX_RECONN);
           reconnTimer = setTimeout(connect, RECONN_DELAY);
         } else {
           setStatus('disconnected',
-            'Connection failed \\u2014 if using SSH, forward port ' + wsPort + ' too. Click to retry.');
+            'Connection failed \\u2014 click to retry');
           statusBar.style.cursor = 'pointer';
           statusBar.onclick = function () {
             statusBar.style.cursor = '';
@@ -259,15 +320,6 @@ export function generateTerminalPage(
             connect();
           };
         }
-      };
-
-      ws.onerror = function () { /* onclose fires next */ };
-    }
-
-    // Main connect: check status first, then open WebSocket
-    function connect() {
-      checkStatus().then(function (ready) {
-        if (ready) connectWs();
       });
     }
 
@@ -275,16 +327,16 @@ export function generateTerminalPage(
 
     // ---- terminal → server ----
     term.onData(function (data) {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+      if (sid) sendInput(data);
     });
 
     // ---- resize handling ----
     function handleResize() {
       fitAddon.fit();
       showSize();
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (sid) {
         var d = fitAddon.proposeDimensions();
-        if (d) ws.send(JSON.stringify({ type: 'resize', cols: d.cols, rows: d.rows }));
+        if (d) sendResize(d.cols, d.rows);
       }
     }
 

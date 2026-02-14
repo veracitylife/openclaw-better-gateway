@@ -1,17 +1,19 @@
 /**
- * Terminal API — PTY management + WebSocket bridge
+ * Terminal API — PTY management + SSE/POST bridge
  *
  * Spawns server-side PTY sessions via node-pty and bridges them
- * to the browser through WebSocket connections.
+ * to the browser through Server-Sent Events (PTY → browser) and
+ * POST requests (browser → PTY). Everything runs on the main
+ * gateway HTTP port — no WebSocket, no side port, no extra SSH
+ * tunnel forwarding required.
  *
  * All external types are defined locally so the module compiles without
- * @types/ws or @types/node-pty being installed.
+ * @types/node-pty being installed.
  */
 
-import type { IncomingMessage } from "node:http";
-import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { createRequire } from "node:module";
-import type { Duplex } from "node:stream";
+import { randomBytes } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Minimal interfaces — fully self-contained, no external @types needed
@@ -20,7 +22,9 @@ import type { Duplex } from "node:stream";
 /** Subset of node-pty's IPty we actually use */
 interface IPty {
   onData(cb: (data: string) => void): { dispose(): void };
-  onExit(cb: (e: { exitCode: number; signal?: number }) => void): { dispose(): void };
+  onExit(cb: (e: { exitCode: number; signal?: number }) => void): {
+    dispose(): void;
+  };
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
@@ -36,32 +40,6 @@ interface INodePty {
   ): IPty;
 }
 
-/** Subset of ws.WebSocket we actually use */
-interface IWsSocket {
-  readonly readyState: number;
-  send(data: string | Buffer): void;
-  close(code?: number, reason?: string): void;
-  on(event: "message", cb: (data: Buffer | ArrayBuffer | Buffer[]) => void): this;
-  on(event: "close", cb: () => void): this;
-  on(event: "error", cb: (err: Error) => void): this;
-  on(event: string, cb: (...args: unknown[]) => void): this;
-}
-
-/** Subset of ws.WebSocketServer we actually use */
-interface IWsServer {
-  handleUpgrade(
-    request: IncomingMessage,
-    socket: Duplex,
-    head: Buffer,
-    callback: (client: IWsSocket) => void,
-  ): void;
-}
-
-/** Shape of the dynamically imported ws module */
-interface IWsModule {
-  WebSocketServer: new (opts: { noServer: true }) => IWsServer;
-}
-
 interface TerminalLogger {
   info(msg: string): void;
   warn(msg: string): void;
@@ -70,26 +48,19 @@ interface TerminalLogger {
 }
 
 // ---------------------------------------------------------------------------
-// Cached dynamic imports
+// Cached dynamic import for node-pty
 //
-// When OpenClaw loads plugins via jiti, bare `import("ws")` / `import("node-pty")`
-// resolve from the *gateway's* node_modules, not the plugin's. So the plugin's
-// own dependencies are invisible. We use `createRequire` anchored at this file's
-// location to force resolution from the plugin's own node_modules, then fall back
-// to a bare dynamic import() for environments where it works natively.
-//
-// String variables (WS_PKG, PTY_PKG) dodge TS static module resolution so the
-// project compiles cleanly even when these packages aren't installed locally.
+// When OpenClaw loads plugins via jiti, bare `import("node-pty")` resolves
+// from the *gateway's* node_modules, not the plugin's. We use `createRequire`
+// anchored at this file's location to force resolution from the plugin's own
+// node_modules, then fall back to a bare dynamic import() for environments
+// where it works natively.
 // ---------------------------------------------------------------------------
 
 let _pty: INodePty | null = null;
 let _ptyPromise: Promise<boolean> | null = null;
 
-let _wsModule: IWsModule | null = null;
-let _wsPromise: Promise<IWsModule> | null = null;
-
-// String variables dodge TS module resolution for dynamic import()
-const WS_PKG: string = "ws";
+// String variable dodges TS module resolution for dynamic import()
 const PTY_PKG: string = "node-pty";
 
 /**
@@ -104,11 +75,11 @@ async function pluginImport(
   const errors: string[] = [];
 
   // Strategy 1: createRequire anchored at this source file
-  // Under jiti, import.meta.url should point to the plugin's source file,
-  // so require() will resolve from the plugin's own node_modules.
   try {
     const req = createRequire(import.meta.url);
-    logger.debug(`Terminal: trying createRequire(${import.meta.url}).resolve("${pkg}")`);
+    logger.debug(
+      `Terminal: trying createRequire(${import.meta.url}).resolve("${pkg}")`,
+    );
     const resolved = req.resolve(pkg);
     logger.debug(`Terminal: resolved ${pkg} → ${resolved}`);
     const mod = req(pkg);
@@ -121,7 +92,6 @@ async function pluginImport(
   }
 
   // Strategy 2: createRequire anchored at process.cwd()
-  // Falls back to wherever the gateway process was started from.
   try {
     const cwdUrl = `file://${process.cwd()}/package.json`;
     const req = createRequire(cwdUrl);
@@ -136,8 +106,6 @@ async function pluginImport(
   }
 
   // Strategy 3: bare dynamic import()
-  // Works in native ESM / standard Node but usually fails under jiti
-  // for packages not in the gateway's own node_modules.
   try {
     logger.debug(`Terminal: trying dynamic import("${pkg}")`);
     const mod = await (import(pkg) as Promise<Record<string, unknown>>);
@@ -148,7 +116,6 @@ async function pluginImport(
   }
 
   // Strategy 4: try well-known global node_modules paths directly
-  // (for packages installed with npm install -g)
   const globalPaths = [
     `/usr/lib/node_modules/${pkg}`,
     `/usr/local/lib/node_modules/${pkg}`,
@@ -167,10 +134,9 @@ async function pluginImport(
     }
   }
 
-  // All strategies failed — throw with full diagnostic info
   throw new Error(
     `Cannot load "${pkg}" — tried ${errors.length} strategies:\n  ` +
-    errors.join("\n  "),
+      errors.join("\n  "),
   );
 }
 
@@ -192,45 +158,41 @@ function loadPty(logger: TerminalLogger): Promise<boolean> {
   return _ptyPromise;
 }
 
-function loadWs(logger: TerminalLogger): Promise<IWsModule> {
-  if (_wsPromise) return _wsPromise;
-  _wsPromise = pluginImport(WS_PKG, logger).then((mod) => {
-    // Hunt for WebSocketServer across all possible jiti/ESM/CJS interop shapes
-    const candidates = [
-      mod,
-      mod.default,
-      (mod.default as any)?.default,
-      (mod as any).WebSocketServer ? mod : null,
-    ].filter(Boolean);
+// ---------------------------------------------------------------------------
+// Session management
+// ---------------------------------------------------------------------------
 
-    for (const c of candidates) {
-      if (typeof (c as any).WebSocketServer === "function") {
-        _wsModule = c as unknown as IWsModule;
-        return _wsModule;
-      }
-    }
-
-    // Last resort: ws CJS exports WebSocketServer as a named export
-    // but jiti may hoist it as Server
-    for (const c of candidates) {
-      if (typeof (c as any).Server === "function") {
-        const shim = { WebSocketServer: (c as any).Server } as unknown as IWsModule;
-        _wsModule = shim;
-        return _wsModule;
-      }
-    }
-
-    const allKeys = candidates.map((c) => Object.keys(c as object).join(", ")).join(" | ");
-    throw new Error(`ws module loaded but WebSocketServer not found (keys: ${allKeys})`);
-  });
-  _wsPromise.catch((err) =>
-    logger.error(`Terminal: failed to load ws — ${err}`),
-  );
-  return _wsPromise;
+interface TerminalSession {
+  sid: string;
+  pty: IPty;
+  res: ServerResponse; // the SSE response
+  keepaliveTimer: ReturnType<typeof setInterval>;
+  cleaned: boolean;
 }
 
-// WebSocket readyState constants (avoids needing the class at all)
-const WS_OPEN = 1;
+function generateSid(): string {
+  return randomBytes(12).toString("hex");
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Write a single SSE event to a response. */
+function sseEvent(res: ServerResponse, data: string, event?: string): void {
+  if (event) res.write(`event: ${event}\n`);
+  res.write(`data: ${data}\n\n`);
+}
+
+/** Read the full request body as a UTF-8 string. */
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Public factory
@@ -240,21 +202,33 @@ export function createTerminalManager(
   logger: TerminalLogger,
   workspaceDir: string,
 ) {
-  // Start loading both modules eagerly so they're warm by the time a
-  // connection arrives.
+  // Start loading node-pty eagerly so it's warm by the time a connection arrives.
   loadPty(logger);
-  loadWs(logger);
 
-  // ---- per-connection handler ------------------------------------------
+  const sessions = new Map<string, TerminalSession>();
 
-  async function handleConnection(socket: IWsSocket): Promise<void> {
+  // ---- SSE stream handler ------------------------------------------------
+
+  async function handleStream(
+    _req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const available = await loadPty(logger);
     if (!available || !_pty) {
-      socket.send(
-        "\r\n\x1b[1;31m node-pty is not installed. Terminal is unavailable.\x1b[0m\r\n" +
-          "\x1b[90m Run: npm install node-pty\x1b[0m\r\n",
+      // Send an error event so the frontend gets a clear message, then close.
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      sseEvent(
+        res,
+        JSON.stringify({
+          error: "node-pty is not installed. Run: npm install node-pty",
+        }),
+        "error",
       );
-      socket.close(1011, "node-pty not available");
+      res.end();
       return;
     }
 
@@ -273,172 +247,200 @@ export function createTerminalManager(
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      socket.send(
-        `\r\n\x1b[1;31mFailed to spawn terminal: ${msg}\x1b[0m\r\n`,
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      sseEvent(
+        res,
+        JSON.stringify({ error: `Failed to spawn terminal: ${msg}` }),
+        "error",
       );
-      socket.close(1011, "PTY spawn failed");
+      res.end();
       return;
     }
 
+    const sid = generateSid();
     logger.debug(
-      `Terminal: PTY spawned pid=${proc.pid} shell=${shell} cwd=${workspaceDir}`,
+      `Terminal: PTY spawned sid=${sid} pid=${proc.pid} shell=${shell} cwd=${workspaceDir}`,
     );
 
-    let cleaned = false;
+    // SSE headers
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no", // disable nginx buffering
+    });
+
+    // Send session ID as the first event
+    sseEvent(res, JSON.stringify({ sid }), "session");
+
+    // Keepalive comment every 15s to prevent proxy/gateway timeouts
+    const keepaliveTimer = setInterval(() => {
+      try {
+        res.write(": keepalive\n\n");
+      } catch {
+        /* response already closed */
+      }
+    }, 15_000);
+
+    const session: TerminalSession = {
+      sid,
+      pty: proc,
+      res,
+      keepaliveTimer,
+      cleaned: false,
+    };
+    sessions.set(sid, session);
+
     function cleanup() {
-      if (cleaned) return;
-      cleaned = true;
+      if (session.cleaned) return;
+      session.cleaned = true;
+      clearInterval(keepaliveTimer);
+      sessions.delete(sid);
       try {
         proc.kill();
       } catch {
         /* already exited */
       }
+      logger.debug(`Terminal: session ${sid} cleaned up`);
     }
 
-    // PTY → browser
+    // PTY → browser (base64-encoded to survive SSE newline framing)
     proc.onData((data) => {
       try {
-        if (socket.readyState === WS_OPEN) socket.send(data);
+        if (!res.destroyed) {
+          sseEvent(res, Buffer.from(data, "utf-8").toString("base64"));
+        }
       } catch {
-        /* socket closed between check and send */
+        /* response closed between check and write */
       }
     });
 
     proc.onExit(({ exitCode }) => {
-      logger.debug(`Terminal: PTY pid=${proc.pid} exited code=${exitCode}`);
+      logger.debug(
+        `Terminal: PTY pid=${proc.pid} exited code=${exitCode}`,
+      );
       try {
-        if (socket.readyState === WS_OPEN) {
-          socket.send(
-            `\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`,
+        if (!res.destroyed) {
+          sseEvent(
+            res,
+            JSON.stringify({ code: exitCode }),
+            "exit",
           );
-          socket.close(1000, "PTY exited");
+          res.end();
         }
       } catch {
         /* already closed */
       }
-    });
-
-    // browser → PTY
-    socket.on("message", (raw: Buffer | ArrayBuffer | Buffer[]) => {
-      const msg = Buffer.isBuffer(raw) ? raw.toString() : String(raw);
-
-      // JSON control messages (e.g. resize)
-      if (msg.startsWith("{")) {
-        try {
-          const ctrl = JSON.parse(msg) as {
-            type?: string;
-            cols?: number;
-            rows?: number;
-          };
-          if (
-            ctrl.type === "resize" &&
-            typeof ctrl.cols === "number" &&
-            typeof ctrl.rows === "number"
-          ) {
-            proc.resize(
-              Math.max(1, Math.floor(ctrl.cols)),
-              Math.max(1, Math.floor(ctrl.rows)),
-            );
-            return;
-          }
-        } catch {
-          /* not valid JSON — fall through to write */
-        }
-      }
-
-      proc.write(msg);
-    });
-
-    socket.on("close", () => {
-      logger.debug(`Terminal: WebSocket closed, killing PTY pid=${proc.pid}`);
       cleanup();
     });
 
-    socket.on("error", (err: Error) => {
-      logger.error(`Terminal: WebSocket error — ${err.message}`);
+    // When the SSE connection drops, kill the PTY
+    res.on("close", () => {
+      logger.debug(`Terminal: SSE connection closed for session ${sid}`);
       cleanup();
     });
   }
 
-  // ---- standalone WebSocket server on a side port -----------------------
-  // The gateway's upgrade handler catches ALL WebSocket connections before
-  // plugins can intercept them, so we spin up our own HTTP server on a
-  // separate port dedicated to the terminal WebSocket.
+  // ---- POST input handler ------------------------------------------------
 
-  const TERMINAL_WS_PORT = 18790;
-  let wsServerStarted = false;
-  let wsReady = false;
-
-  async function startWsServer(): Promise<void> {
-    if (wsServerStarted) return;
-    wsServerStarted = true;
-
-    let wsmod: IWsModule;
+  async function handleInput(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req);
+    let parsed: { sid?: string; data?: string };
     try {
-      wsmod = await loadWs(logger);
-    } catch (err) {
-      logger.error(`Terminal: cannot load ws — ${err}`);
-      wsServerStarted = false;
+      parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
       return;
     }
 
-    const wss = new wsmod.WebSocketServer({ noServer: true });
+    const session = parsed.sid ? sessions.get(parsed.sid) : undefined;
+    if (!session) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Session not found" }));
+      return;
+    }
 
-    const server = createServer((_req, res) => {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("terminal ws endpoint");
-    });
+    if (typeof parsed.data === "string") {
+      session.pty.write(parsed.data);
+    }
 
-    server.on(
-      "upgrade",
-      (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-        if (socket.destroyed) return;
-        wss.handleUpgrade(req, socket, head, (wsSocket) => {
-          handleConnection(wsSocket);
-        });
-      },
-    );
-
-    server.listen(TERMINAL_WS_PORT, "127.0.0.1", () => {
-      wsReady = true;
-      logger.info(`Terminal: WebSocket server listening on ws://127.0.0.1:${TERMINAL_WS_PORT}`);
-    });
-
-    server.on("error", (err: Error) => {
-      logger.error(`Terminal: WebSocket server error — ${err.message}`);
-      wsReady = false;
-      wsServerStarted = false;
-    });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
   }
 
-  // Start WS server eagerly so it's ready before any browser connects.
-  // Previously this was lazy (triggered on first HTTP request), causing a
-  // race where the page loaded before the WS server was listening.
-  startWsServer();
+  // ---- POST resize handler -----------------------------------------------
 
-  // ---- public API -------------------------------------------------------
+  async function handleResize(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req);
+    let parsed: { sid?: string; cols?: number; rows?: number };
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
+      return;
+    }
+
+    const session = parsed.sid ? sessions.get(parsed.sid) : undefined;
+    if (!session) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Session not found" }));
+      return;
+    }
+
+    if (typeof parsed.cols === "number" && typeof parsed.rows === "number") {
+      session.pty.resize(
+        Math.max(1, Math.floor(parsed.cols)),
+        Math.max(1, Math.floor(parsed.rows)),
+      );
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  }
+
+  // ---- public API ---------------------------------------------------------
 
   return {
-    /** The port the terminal WebSocket server listens on. */
-    wsPort: TERMINAL_WS_PORT,
+    /**
+     * Route terminal sub-requests. Call with the sub-path after
+     * `/better-gateway/terminal` (e.g. "/stream", "/input", "/resize").
+     * Returns true if handled, false otherwise.
+     */
+    async handleRequest(
+      req: IncomingMessage,
+      res: ServerResponse,
+      subpath: string,
+    ): Promise<boolean> {
+      if (subpath === "/stream" && req.method === "GET") {
+        await handleStream(req, res);
+        return true;
+      }
+      if (subpath === "/input" && req.method === "POST") {
+        await handleInput(req, res);
+        return true;
+      }
+      if (subpath === "/resize" && req.method === "POST") {
+        await handleResize(req, res);
+        return true;
+      }
+      return false;
+    },
 
     /** Returns true if node-pty is installed and loaded. */
     isAvailable(): Promise<boolean> {
       return loadPty(logger);
-    },
-
-    /** Returns status information for the /terminal/status endpoint. */
-    async getStatus(): Promise<{
-      wsPort: number;
-      wsReady: boolean;
-      ptyAvailable: boolean;
-    }> {
-      const ptyAvailable = await loadPty(logger);
-      return {
-        wsPort: TERMINAL_WS_PORT,
-        wsReady,
-        ptyAvailable,
-      };
     },
   };
 }

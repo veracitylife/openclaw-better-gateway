@@ -36,9 +36,6 @@
     "openclaw.plugin.json",
     "README.md"
   ],
-  "dependencies": {
-    "ws": "^8.18.0"
-  },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
   },
