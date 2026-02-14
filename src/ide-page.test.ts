@@ -42,12 +42,12 @@ describe("IDE Page Generator", () => {
       }
     });
 
-    it("should correctly escape backslash regex in normalizeWorkspaceRoot", () => {
+    it("should correctly handle backslash conversion in normalizeWorkspaceRoot", () => {
       const html = generateIdePage();
       const js = extractInlineJs(html);
-      // The output must contain /\\/g (regex matching backslash, global flag).
-      // A broken escape produces /\/g which is an unclosed regex.
-      expect(js).toContain("replace(/\\\\/g,");
+      // normalizeWorkspaceRoot converts backslashes to forward slashes.
+      // Implementation uses String.fromCharCode(92) to avoid template escaping issues.
+      expect(js).toContain("String.fromCharCode(92)");
     });
   });
 

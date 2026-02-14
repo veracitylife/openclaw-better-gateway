@@ -105,6 +105,10 @@
 
   // View modes: 'chat' | 'ide' | 'split'
   let currentViewMode = 'chat';
+  try {
+    const saved = localStorage.getItem('better-gateway-view-mode');
+    if (saved === 'ide' || saved === 'split') currentViewMode = saved;
+  } catch (_e) { /* localStorage unavailable */ }
 
   // SVG icon for code/IDE (matches gateway's feather icon style)
   const IDE_ICON_SVG = `
