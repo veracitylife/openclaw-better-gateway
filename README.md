@@ -1,41 +1,51 @@
 # OpenClaw Better Gateway
 
-An OpenClaw plugin that turns the Gateway into a **reliable chat + code workspace**:
-- resilient auto-reconnect/refresh UX
-- embedded Monaco IDE
-- workspace file API for editing from the browser
+An OpenClaw plugin that turns the Gateway into a **full-featured workspace** — resilient chat, embedded IDE, browser terminal, and file API, all in one tab.
 
 ## Why this plugin
 
-OpenClaw Gateway is great, but when sockets drop or you need to quickly edit files, flow breaks.
-
-**Better Gateway** keeps sessions alive and adds an IDE directly in the Gateway experience.
+OpenClaw Gateway is great for chatting with models, but when sockets drop, you need to edit files, or you want a terminal — your flow breaks. **Better Gateway** keeps sessions alive and puts everything you need right inside the Gateway UI.
 
 ## Features
 
-### Reliability / Auto-Refresh Experience
+### Auto-Reconnect & Reliability
 
-✅ **Auto-Reconnect** — WebSocket disconnects are automatically recovered  
-✅ **Connection Status Indicator** — Clear connected/reconnecting/disconnected state  
-✅ **Network Awareness** — Detects online/offline and retries automatically  
-✅ **Click-to-Refresh Recovery** — Fast manual recovery path when needed  
-✅ **Enhanced Gateway Route** — Drop-in improved UI at `/better-gateway/`
+- **Automatic WebSocket recovery** — disconnects are detected and retried transparently
+- **Visual status indicator** — connected / reconnecting / disconnected state always visible
+- **Network awareness** — detects online/offline transitions and retries when connectivity returns
+- **Click-to-refresh fallback** — fast manual recovery when automatic retry is exhausted
+- **Enhanced Gateway route** — drop-in improved UI at `/better-gateway/` with all enhancements pre-injected
 
-### IDE (Big Selling Point 🚀)
+### Embedded IDE (Monaco)
 
-✅ **Embedded Monaco IDE** — Full editor experience inside Gateway  
-✅ **Sidebar File Explorer** — Browse workspace files/folders  
-✅ **Multi-tab Editing** — Open, switch, close, reorder tabs  
-✅ **Keyboard Shortcuts** — Save, toggle sidebar, quick-open, tab nav  
-✅ **Open Folder + Refresh Controls** — Quickly re-scope and refresh tree  
-✅ **State Persistence** — Open tabs/active tab/workspace root remembered  
-✅ **Gateway-Native Feel** — IDE integrated into sidebar navigation  
-✅ **Split-view-friendly foundation** — designed for chat + IDE workflows
+- **Full Monaco editor** in the browser — syntax highlighting for 30+ languages
+- **Sidebar file explorer** — tree navigation with open-folder and refresh controls
+- **Multi-tab editing** — open, switch, close, and reorder tabs
+- **Keyboard shortcuts** — Ctrl+S save, Ctrl+B toggle sidebar, Ctrl+P quick-open, Ctrl+W close tab, Ctrl+Tab cycle tabs
+- **State persistence** — open tabs, active tab, and workspace root remembered across reloads
+- **Gateway-native navigation** — IDE appears as a nav item; click for split view (IDE + chat), Shift+click for IDE-only
+
+### Embedded Terminal (xterm.js + node-pty)
+
+- **Real PTY backend** — full interactive terminal via `node-pty` (vim, htop, tab completion, colors, everything)
+- **xterm.js frontend** — 256-color support, scrollback, clickable links, proper resize handling
+- **SSE + POST transport** — runs entirely on the main gateway port; no extra ports, no extra SSH tunnel config
+- **Gateway-native navigation** — CLI nav item; click for split view (terminal + chat), Shift+click for terminal-only
+- **Keyboard shortcuts** — Ctrl+\` toggles terminal, Ctrl+L toggles chat sidebar
 
 ### File API
 
-✅ **Read/Write/List/Delete/Mkdir** routes for workspace operations  
-✅ **Tested implementation** with strong coverage in repo tests
+- **Read / Write / List / Delete / Mkdir** — full workspace file operations over HTTP
+- **Tested implementation** with strong coverage in repo tests
+
+### Keyboard Shortcuts (all views)
+
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+L | Toggle chat sidebar (works from IDE and terminal) |
+| Ctrl+\` | Toggle terminal |
+| Shift+click IDE | IDE fullscreen |
+| Shift+click CLI | Terminal fullscreen |
 
 ---
 
@@ -56,6 +66,8 @@ npm install && npm run build
 openclaw plugins install -l .
 ```
 
+**Note:** The terminal feature requires `node-pty` (native module). It's listed as an optional dependency — if it fails to compile, everything else still works, and the terminal page will tell you what's missing.
+
 ## Usage
 
 After installation and gateway restart:
@@ -64,16 +76,23 @@ After installation and gateway restart:
 https://<YOUR_GATEWAY>/better-gateway/
 ```
 
-### Main endpoints
+### Endpoints
 
-| Path | Description |
-|------|-------------|
-| `/better-gateway/` | Enhanced gateway UI with auto-reconnect |
-| `/better-gateway/ide` | Embedded IDE page (Monaco + file explorer) |
-| `/better-gateway/api/files` | Workspace file operations API |
-| `/better-gateway/help` | Help/installation page |
-| `/better-gateway/inject.js` | Standalone injection script |
-| `/better-gateway/userscript.user.js` | Userscript download |
+| Path | Method | Description |
+|------|--------|-------------|
+| `/better-gateway/` | GET | Enhanced gateway UI with auto-reconnect and nav items |
+| `/better-gateway/ide` | GET | Standalone IDE page (Monaco + file explorer) |
+| `/better-gateway/terminal` | GET | Standalone terminal page (xterm.js) |
+| `/better-gateway/terminal/stream` | GET | Terminal SSE stream (PTY output) |
+| `/better-gateway/terminal/input` | POST | Terminal input (keystrokes to PTY) |
+| `/better-gateway/terminal/resize` | POST | Terminal resize (cols/rows to PTY) |
+| `/better-gateway/api/files` | GET | List files in a directory |
+| `/better-gateway/api/files/read` | GET | Read a file |
+| `/better-gateway/api/files/write` | POST | Write a file |
+| `/better-gateway/api/files` | DELETE | Delete a file |
+| `/better-gateway/help` | GET | Help / installation page |
+| `/better-gateway/inject.js` | GET | Standalone injection script |
+| `/better-gateway/userscript.user.js` | GET | Tampermonkey userscript download |
 
 ## Configuration
 
@@ -97,10 +116,10 @@ In your OpenClaw config (`openclaw.json`):
 ## How it works
 
 The plugin:
-1. Proxies the original gateway UI under `/better-gateway/`
-2. Injects reconnect/status behavior into the UI runtime
-3. Serves IDE + file API routes
-4. Keeps the Gateway workflow in one place (chat + code)
+1. Proxies the original gateway UI under `/better-gateway/` and injects reconnect/status behavior
+2. Serves the IDE (Monaco) and terminal (xterm.js) as standalone pages, embedded via iframes in the nav
+3. Bridges the terminal to a server-side PTY using SSE (server-to-browser) and POST (browser-to-server) — all on the main gateway port
+4. Exposes a file API for workspace read/write/list/delete operations
 
 When a WebSocket connection drops, Better Gateway retries automatically. If recovery fails, the status indicator gives a quick click-to-refresh fallback.
 
@@ -130,4 +149,4 @@ MIT
 
 ---
 
-Built with 🐾 by [ThisIsJeron](https://github.com/ThisIsJeron) and Clawd
+Built with :paw_prints: by [ThisIsJeron](https://github.com/ThisIsJeron) and Clawd
