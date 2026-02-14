@@ -92,47 +92,94 @@ let _wsPromise: Promise<IWsModule> | null = null;
 const WS_PKG: string = "ws";
 const PTY_PKG: string = "node-pty";
 
-// Require function anchored at this file so it resolves from the plugin's node_modules
-let _pluginRequire: NodeRequire | null = null;
-function getPluginRequire(): NodeRequire {
-  if (!_pluginRequire) {
-    try {
-      // ESM: import.meta.url is available
-      _pluginRequire = createRequire(import.meta.url);
-    } catch {
-      // CJS fallback (shouldn't happen but just in case)
-      _pluginRequire = createRequire(__filename);
-    }
-  }
-  return _pluginRequire;
-}
-
 /**
- * Try to load a module: first via plugin-local require(), then via bare import().
- * Returns the module exports object.
+ * Try to load a native/CJS module using multiple resolution strategies.
+ * Each strategy is tried in order; all failures are logged so we can
+ * actually diagnose what's going wrong under jiti.
  */
-async function pluginImport(pkg: string): Promise<Record<string, unknown>> {
-  // Strategy 1: createRequire from plugin directory (works under jiti)
+async function pluginImport(
+  pkg: string,
+  logger: TerminalLogger,
+): Promise<Record<string, unknown>> {
+  const errors: string[] = [];
+
+  // Strategy 1: createRequire anchored at this source file
+  // Under jiti, import.meta.url should point to the plugin's source file,
+  // so require() will resolve from the plugin's own node_modules.
   try {
-    const req = getPluginRequire();
+    const req = createRequire(import.meta.url);
+    logger.debug(`Terminal: trying createRequire(${import.meta.url}).resolve("${pkg}")`);
+    const resolved = req.resolve(pkg);
+    logger.debug(`Terminal: resolved ${pkg} → ${resolved}`);
     const mod = req(pkg);
     return typeof mod === "object" && mod !== null
       ? (mod as Record<string, unknown>)
       : { default: mod };
-  } catch {
-    // require() failed — fall through to dynamic import
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`createRequire(import.meta.url): ${msg}`);
   }
 
-  // Strategy 2: bare dynamic import (works in native ESM / standard Node)
-  return import(pkg) as Promise<Record<string, unknown>>;
+  // Strategy 2: createRequire anchored at process.cwd()
+  // Falls back to wherever the gateway process was started from.
+  try {
+    const cwdUrl = `file://${process.cwd()}/package.json`;
+    const req = createRequire(cwdUrl);
+    logger.debug(`Terminal: trying createRequire(${cwdUrl})("${pkg}")`);
+    const mod = req(pkg);
+    return typeof mod === "object" && mod !== null
+      ? (mod as Record<string, unknown>)
+      : { default: mod };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`createRequire(cwd): ${msg}`);
+  }
+
+  // Strategy 3: bare dynamic import()
+  // Works in native ESM / standard Node but usually fails under jiti
+  // for packages not in the gateway's own node_modules.
+  try {
+    logger.debug(`Terminal: trying dynamic import("${pkg}")`);
+    const mod = await (import(pkg) as Promise<Record<string, unknown>>);
+    return mod;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`import(): ${msg}`);
+  }
+
+  // Strategy 4: try well-known global node_modules paths directly
+  // (for packages installed with npm install -g)
+  const globalPaths = [
+    `/usr/lib/node_modules/${pkg}`,
+    `/usr/local/lib/node_modules/${pkg}`,
+  ];
+  for (const gp of globalPaths) {
+    try {
+      logger.debug(`Terminal: trying direct require("${gp}")`);
+      const req = createRequire(import.meta.url);
+      const mod = req(gp);
+      return typeof mod === "object" && mod !== null
+        ? (mod as Record<string, unknown>)
+        : { default: mod };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`global(${gp}): ${msg}`);
+    }
+  }
+
+  // All strategies failed — throw with full diagnostic info
+  throw new Error(
+    `Cannot load "${pkg}" — tried ${errors.length} strategies:\n  ` +
+    errors.join("\n  "),
+  );
 }
 
 function loadPty(logger: TerminalLogger): Promise<boolean> {
   if (_ptyPromise) return _ptyPromise;
-  _ptyPromise = pluginImport(PTY_PKG).then(
+  _ptyPromise = pluginImport(PTY_PKG, logger).then(
     (mod) => {
       _pty = (mod.default ?? mod) as unknown as INodePty;
-      logger.info("Terminal: node-pty loaded");
+      logger.info("Terminal: node-pty loaded successfully");
       return true;
     },
     (err) => {
@@ -147,7 +194,7 @@ function loadPty(logger: TerminalLogger): Promise<boolean> {
 
 function loadWs(logger: TerminalLogger): Promise<IWsModule> {
   if (_wsPromise) return _wsPromise;
-  _wsPromise = pluginImport(WS_PKG).then((mod) => {
+  _wsPromise = pluginImport(WS_PKG, logger).then((mod) => {
     // Hunt for WebSocketServer across all possible jiti/ESM/CJS interop shapes
     const candidates = [
       mod,
