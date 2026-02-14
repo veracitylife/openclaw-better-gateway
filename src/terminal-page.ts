@@ -357,6 +357,18 @@ export function generateTerminalPage(
       if (ev.data.type === 'focus')   term.focus();
     });
 
+    // ---- Ctrl+L — toggle chat sidebar (forward to parent frame) ----
+    // Ctrl only, NOT Cmd — Cmd+L is browser "focus URL bar"
+    window.addEventListener('keydown', function (event) {
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if ((event.key || '').toLowerCase() !== 'l') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'toggleChat' }, '*');
+      }
+    }, true);
+
     // ---- focus ----
     container.addEventListener('click', function () { term.focus(); });
     term.focus();

@@ -536,10 +536,10 @@
   }
 
   function setupIdeHotkeys() {
-    // Cmd/Ctrl+L — toggle chat sidebar in IDE/CLI views
+    // Ctrl+L — toggle chat sidebar in IDE/CLI views
+    // Ctrl only, NOT Cmd — Cmd+L is browser "focus URL bar"
     window.addEventListener("keydown", function (event) {
-      const modKey = event.metaKey || event.ctrlKey;
-      if (!modKey || event.altKey || event.shiftKey) return;
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
       if (String(event.key || "").toLowerCase() !== "l") return;
 
       const target = event.target;
@@ -584,6 +584,22 @@
         setViewMode("split-cli");
       }
     }, true);
+
+    // Listen for postMessage from IDE/CLI iframes (e.g. Cmd/Ctrl+L)
+    window.addEventListener("message", function (event) {
+      if (!event.data || !event.data.type) return;
+      if (event.data.type === "toggleChat") {
+        if (currentViewMode === "split") {
+          setViewMode("ide");
+        } else if (currentViewMode === "ide") {
+          setViewMode("split");
+        } else if (currentViewMode === "split-cli") {
+          setViewMode("cli");
+        } else if (currentViewMode === "cli") {
+          setViewMode("split-cli");
+        }
+      }
+    });
   }
 
   // Track if IDE/split view is active (for nav click handlers)
