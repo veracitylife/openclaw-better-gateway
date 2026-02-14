@@ -105,20 +105,33 @@ function loadPty(logger: TerminalLogger): Promise<boolean> {
 function loadWs(logger: TerminalLogger): Promise<IWsModule> {
   if (_wsPromise) return _wsPromise;
   _wsPromise = import(WS_PKG).then((mod: Record<string, unknown>) => {
-    // ws ESM: mod.default is the WebSocket class with .WebSocketServer attached
-    // ws CJS via jiti: mod.default may be the module object, or mod itself
-    const raw = mod.default ?? mod;
-    let wsmod: IWsModule;
-    if (typeof (raw as any).WebSocketServer === "function") {
-      wsmod = raw as unknown as IWsModule;
-    } else if (typeof (raw as any).default?.WebSocketServer === "function") {
-      // double-default (jiti CJS interop)
-      wsmod = (raw as any).default as unknown as IWsModule;
-    } else {
-      throw new Error(`ws module loaded but WebSocketServer not found (keys: ${Object.keys(raw as object).join(", ")})`);
+    // Hunt for WebSocketServer across all possible jiti/ESM/CJS interop shapes
+    const candidates = [
+      mod,
+      mod.default,
+      (mod.default as any)?.default,
+      (mod as any).WebSocketServer ? mod : null,
+    ].filter(Boolean);
+
+    for (const c of candidates) {
+      if (typeof (c as any).WebSocketServer === "function") {
+        _wsModule = c as unknown as IWsModule;
+        return _wsModule;
+      }
     }
-    _wsModule = wsmod;
-    return wsmod;
+
+    // Last resort: ws CJS exports WebSocketServer as a named export
+    // but jiti may hoist it as Server
+    for (const c of candidates) {
+      if (typeof (c as any).Server === "function") {
+        const shim = { WebSocketServer: (c as any).Server } as unknown as IWsModule;
+        _wsModule = shim;
+        return _wsModule;
+      }
+    }
+
+    const allKeys = candidates.map((c) => Object.keys(c as object).join(", ")).join(" | ");
+    throw new Error(`ws module loaded but WebSocketServer not found (keys: ${allKeys})`);
   });
   _wsPromise.catch((err) =>
     logger.error(`Terminal: failed to load ws — ${err}`),
