@@ -349,9 +349,10 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       window.eval(injectScript);
       
       const items = navItems.querySelectorAll(".nav-item");
-      expect(items.length).toBe(2);
+      expect(items.length).toBe(3);
       expect(items[0].getAttribute("href")).toBe("/chat");
       expect(items[1].getAttribute("href")).toBe("#ide");
+      expect(items[2].getAttribute("href")).toBe("#cli");
     });
 
     it.skip("should not inject on standalone IDE page", () => {
@@ -359,14 +360,16 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       // This functionality is tested manually in the browser
     });
 
-    it("should not inject duplicate IDE nav items", () => {
+    it("should not inject duplicate nav items on double eval", () => {
       createGatewaySidebar();
       
       window.eval(injectScript);
       window.eval(injectScript);
       
       const ideNavs = window.document.querySelectorAll("#better-gateway-ide-nav");
+      const cliNavs = window.document.querySelectorAll("#better-gateway-cli-nav");
       expect(ideNavs.length).toBe(1);
+      expect(cliNavs.length).toBe(1);
     });
 
     it("should log injection message to console", () => {
@@ -375,7 +378,7 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       
       window.eval(injectScript);
       
-      expect(consoleSpy).toHaveBeenCalledWith("[BetterGateway] IDE nav item injected below Chat");
+      expect(consoleSpy).toHaveBeenCalledWith("[BetterGateway] IDE + CLI nav items injected");
     });
 
     it("should create IDE iframe when view is toggled", () => {

@@ -126,6 +126,14 @@
     </svg>
   `;
 
+  // SVG icon for CLI/Terminal (prompt arrow + underscore)
+  const CLI_ICON_SVG = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="4 17 10 11 4 5"></polyline>
+      <line x1="12" y1="19" x2="20" y2="19"></line>
+    </svg>
+  `;
+
   function createIdeNavItem() {
     const item = document.createElement("a");
     item.id = "better-gateway-ide-nav";
@@ -159,10 +167,55 @@
     return item;
   }
 
+  function createCliNavItem() {
+    const item = document.createElement("a");
+    item.id = "better-gateway-cli-nav";
+    item.href = "#cli";
+    item.className = "nav-item";
+    item.title = "CLI - Terminal (click for split view, Shift+click for CLI only)";
+    item.innerHTML = `
+      <span class="nav-item__icon" aria-hidden="true">${CLI_ICON_SVG}</span>
+      <span class="nav-item__text">CLI</span>
+    `;
+
+    item.addEventListener("click", function (e) {
+      e.preventDefault();
+      if (e.shiftKey) {
+        // Shift+click toggles CLI-only view
+        if (currentViewMode === 'cli') {
+          setViewMode('chat');
+        } else {
+          setViewMode('cli');
+        }
+      } else {
+        // Regular click toggles split-cli view (terminal + chat)
+        if (currentViewMode === 'split-cli') {
+          setViewMode('chat');
+        } else {
+          setViewMode('split-cli');
+        }
+      }
+    });
+
+    return item;
+  }
+
   function createIdeFrame() {
     const frame = document.createElement("iframe");
     frame.id = "better-gateway-ide-frame";
     frame.src = `/better-gateway/ide?v=${encodeURIComponent(INJECT_VERSION)}`;
+    frame.style.cssText = `
+      border: none;
+      background: #1e1e1e;
+      display: none;
+    `;
+    return frame;
+  }
+
+  function createCliFrame() {
+    const frame = document.createElement("iframe");
+    frame.id = "better-gateway-cli-frame";
+    frame.src = `/better-gateway/terminal?v=${encodeURIComponent(INJECT_VERSION)}`;
     frame.style.cssText = `
       border: none;
       background: #1e1e1e;
@@ -226,15 +279,25 @@
         setViewMode("ide");
       } else if (currentViewMode === "ide") {
         setViewMode("split");
+      } else if (currentViewMode === "split-cli") {
+        setViewMode("cli");
+      } else if (currentViewMode === "cli") {
+        setViewMode("split-cli");
       }
     });
     return button;
   }
 
+  function getActiveFrame() {
+    var cliFrame = document.getElementById("better-gateway-cli-frame");
+    var ideFrame = document.getElementById("better-gateway-ide-frame");
+    if (cliFrame && cliFrame.style.display !== "none") return cliFrame;
+    return ideFrame;
+  }
+
   function setupSplitResize() {
     const handle = document.getElementById("better-gateway-split-handle");
-    const ideFrame = document.getElementById("better-gateway-ide-frame");
-    if (!handle || !ideFrame) return;
+    if (!handle) return;
 
     let isDragging = false;
 
@@ -245,13 +308,16 @@
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
       // Keep receiving mouse events when cursor crosses the iframe.
-      ideFrame.style.pointerEvents = "none";
+      var frame = getActiveFrame();
+      if (frame) frame.style.pointerEvents = "none";
       e.preventDefault();
     });
 
     document.addEventListener("mousemove", function(e) {
       if (!isDragging) return;
-      const container = ideFrame.parentElement;
+      var frame = getActiveFrame();
+      if (!frame) return;
+      const container = frame.parentElement;
       if (!container) return;
       
       const containerRect = container.getBoundingClientRect();
@@ -260,8 +326,8 @@
       const maxWidth = containerRect.width - 350; // Leave room for chat
       const clampedWidth = Math.min(Math.max(newWidth, minWidth), maxWidth);
 
-      ideFrame.style.width = clampedWidth + "px";
-      ideFrame.style.flex = "none";
+      frame.style.width = clampedWidth + "px";
+      frame.style.flex = "none";
     });
 
     document.addEventListener("mouseup", function() {
@@ -271,7 +337,8 @@
         handle.style.background = "#3c3c3c";
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
-        ideFrame.style.pointerEvents = "";
+        var frame = getActiveFrame();
+        if (frame) frame.style.pointerEvents = "";
       }
     });
   }
@@ -280,9 +347,10 @@
     const main = document.querySelector("main.content");
     if (!main) return;
 
-    // Create or get the split container (flex wrapper for IDE | handle | chat)
+    // Create or get the split container (flex wrapper for frames | handle | chat)
     let splitWrapper = document.getElementById("better-gateway-split-wrapper");
     let ideFrame = document.getElementById("better-gateway-ide-frame");
+    let cliFrame = document.getElementById("better-gateway-cli-frame");
     let splitHandle = document.getElementById("better-gateway-split-handle");
 
     if (!splitWrapper) {
@@ -299,6 +367,7 @@
         position: relative;
       `;
       ideFrame = createIdeFrame();
+      cliFrame = createCliFrame();
       splitHandle = createSplitResizeHandle();
       const chatToggleButton = createChatToggleButton();
 
@@ -306,6 +375,7 @@
       const parent = main.parentNode;
       parent.replaceChild(splitWrapper, main);
       splitWrapper.appendChild(ideFrame);
+      splitWrapper.appendChild(cliFrame);
       splitWrapper.appendChild(splitHandle);
       splitWrapper.appendChild(main);
       splitWrapper.appendChild(chatToggleButton);
@@ -313,18 +383,44 @@
       setupSplitResize();
     } else {
       ideFrame = document.getElementById("better-gateway-ide-frame");
+      cliFrame = document.getElementById("better-gateway-cli-frame");
       splitHandle = document.getElementById("better-gateway-split-handle");
     }
 
     const chatNav = document.querySelector('.nav-item[href="/chat"]') 
       || document.querySelector('.nav-item[href="/better-gateway/chat"]');
     const ideNav = document.getElementById("better-gateway-ide-nav");
+    const cliNav = document.getElementById("better-gateway-cli-nav");
     const chatToggleButton = document.getElementById("better-gateway-chat-toggle");
+
+    // Helper: hide both content frames
+    function hideFrames() {
+      if (ideFrame) { ideFrame.style.display = "none"; }
+      if (cliFrame) { cliFrame.style.display = "none"; }
+    }
+
+    // Helper: show a frame in fullscreen mode
+    function showFrameFullscreen(frame) {
+      frame.style.display = "block";
+      frame.style.width = "100%";
+      frame.style.height = "100%";
+      frame.style.flex = "1";
+      frame.style.minWidth = "";
+    }
+
+    // Helper: show a frame in split mode (left panel)
+    function showFrameSplit(frame) {
+      frame.style.display = "block";
+      frame.style.width = "55%";
+      frame.style.height = "100%";
+      frame.style.flex = "none";
+      frame.style.minWidth = "280px";
+    }
 
     // Apply the view mode
     if (mode === 'chat') {
-      // Chat only - hide IDE, chat takes full width
-      ideFrame.style.display = "none";
+      // Chat only — hide both frames, chat takes full width
+      hideFrames();
       splitHandle.style.display = "none";
       main.style.display = "";
       main.style.flex = "1";
@@ -334,22 +430,19 @@
       
       if (chatNav) chatNav.classList.add("active");
       if (ideNav) ideNav.classList.remove("active");
-      if (chatToggleButton) {
-        chatToggleButton.style.display = "none";
-      }
+      if (cliNav) cliNav.classList.remove("active");
+      if (chatToggleButton) chatToggleButton.style.display = "none";
       
     } else if (mode === 'ide') {
-      // IDE only - IDE takes full width
-      ideFrame.style.display = "block";
-      ideFrame.style.width = "100%";
-      ideFrame.style.height = "100%";
-      ideFrame.style.flex = "1";
-      ideFrame.style.minWidth = "";
+      // IDE only — IDE fullscreen
+      hideFrames();
+      showFrameFullscreen(ideFrame);
       splitHandle.style.display = "none";
       main.style.display = "none";
       
       if (chatNav) chatNav.classList.remove("active");
       if (ideNav) ideNav.classList.add("active");
+      if (cliNav) cliNav.classList.remove("active");
       if (chatToggleButton) {
         chatToggleButton.style.display = "block";
         chatToggleButton.textContent = "←";
@@ -357,12 +450,9 @@
       }
       
     } else if (mode === 'split') {
-      // Split view: IDE (left) | handle | Chat (right sidebar)
-      ideFrame.style.display = "block";
-      ideFrame.style.width = "55%";
-      ideFrame.style.height = "100%";
-      ideFrame.style.flex = "none";
-      ideFrame.style.minWidth = "280px";
+      // Split view: IDE (left) | handle | Chat (right)
+      hideFrames();
+      showFrameSplit(ideFrame);
       splitHandle.style.display = "block";
       main.style.display = "";
       main.style.flex = "1";
@@ -370,9 +460,45 @@
       main.style.minWidth = "320px";
       main.style.overflow = "auto";
       
-      // Both nav items get a special state
       if (chatNav) chatNav.classList.add("active");
       if (ideNav) ideNav.classList.add("active");
+      if (cliNav) cliNav.classList.remove("active");
+      if (chatToggleButton) {
+        chatToggleButton.style.display = "block";
+        chatToggleButton.textContent = "→";
+        chatToggleButton.title = "Hide Chat Sidebar (Cmd/Ctrl+L)";
+      }
+
+    } else if (mode === 'cli') {
+      // CLI only — Terminal fullscreen
+      hideFrames();
+      showFrameFullscreen(cliFrame);
+      splitHandle.style.display = "none";
+      main.style.display = "none";
+      
+      if (chatNav) chatNav.classList.remove("active");
+      if (ideNav) ideNav.classList.remove("active");
+      if (cliNav) cliNav.classList.add("active");
+      if (chatToggleButton) {
+        chatToggleButton.style.display = "block";
+        chatToggleButton.textContent = "←";
+        chatToggleButton.title = "Show Chat Sidebar (Cmd/Ctrl+L)";
+      }
+
+    } else if (mode === 'split-cli') {
+      // Split view: CLI (left) | handle | Chat (right)
+      hideFrames();
+      showFrameSplit(cliFrame);
+      splitHandle.style.display = "block";
+      main.style.display = "";
+      main.style.flex = "1";
+      main.style.width = "";
+      main.style.minWidth = "320px";
+      main.style.overflow = "auto";
+      
+      if (chatNav) chatNav.classList.add("active");
+      if (ideNav) ideNav.classList.remove("active");
+      if (cliNav) cliNav.classList.add("active");
       if (chatToggleButton) {
         chatToggleButton.style.display = "block";
         chatToggleButton.textContent = "→";
@@ -380,10 +506,19 @@
       }
     }
 
+    // Notify CLI iframe to resize/focus when becoming visible
+    if ((mode === 'cli' || mode === 'split-cli') && cliFrame && cliFrame.contentWindow) {
+      setTimeout(function() {
+        try {
+          cliFrame.contentWindow.postMessage({ type: 'resize' }, '*');
+          cliFrame.contentWindow.postMessage({ type: 'focus' }, '*');
+        } catch (_e) {}
+      }, 100);
+    }
+
     currentViewMode = mode;
-    try { localStorage.setItem('better-gateway-view-mode', mode); } catch (_e) { /* ignore */ }
-    // Update legacy flag for nav click handlers
-    ideViewActive = (mode === 'ide' || mode === 'split');
+    // Any non-chat mode needs click interception on nav items
+    ideViewActive = (mode !== 'chat');
     console.log("[BetterGateway] View mode:", mode);
   }
 
@@ -405,9 +540,10 @@
   }
 
   function setupIdeHotkeys() {
+    // Ctrl+L — toggle chat sidebar in IDE/CLI views
+    // Ctrl only, NOT Cmd — Cmd+L is browser "focus URL bar"
     window.addEventListener("keydown", function (event) {
-      const modKey = event.metaKey || event.ctrlKey;
-      if (!modKey || event.altKey || event.shiftKey) return;
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
       if (String(event.key || "").toLowerCase() !== "l") return;
 
       const target = event.target;
@@ -425,8 +561,49 @@
         setViewMode("ide");
       } else if (currentViewMode === "ide") {
         setViewMode("split");
+      } else if (currentViewMode === "split-cli") {
+        setViewMode("cli");
+      } else if (currentViewMode === "cli") {
+        setViewMode("split-cli");
       }
     }, true);
+
+    // Ctrl+` — toggle terminal (like VS Code)
+    window.addEventListener("keydown", function (event) {
+      if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+      if (event.code !== "Backquote") return;
+
+      const target = event.target;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+
+      event.preventDefault();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      event.stopPropagation();
+
+      if (currentViewMode === "cli" || currentViewMode === "split-cli") {
+        setViewMode("chat");
+      } else {
+        setViewMode("split-cli");
+      }
+    }, true);
+
+    // Listen for postMessage from IDE/CLI iframes (e.g. Cmd/Ctrl+L)
+    window.addEventListener("message", function (event) {
+      if (!event.data || !event.data.type) return;
+      if (event.data.type === "toggleChat") {
+        if (currentViewMode === "split") {
+          setViewMode("ide");
+        } else if (currentViewMode === "ide") {
+          setViewMode("split");
+        } else if (currentViewMode === "split-cli") {
+          setViewMode("cli");
+        } else if (currentViewMode === "cli") {
+          setViewMode("split-cli");
+        }
+      }
+    });
   }
 
   // Track if IDE/split view is active (for nav click handlers)
@@ -435,13 +612,19 @@
   function injectIdeNavItem() {
     if (ideTabInjected) return false;
 
-    // Don't inject on the standalone IDE page
-    if (window.location && window.location.pathname === "/better-gateway/ide") {
+    // Don't inject on standalone pages (IDE / Terminal)
+    if (window.location && (
+      window.location.pathname === "/better-gateway/ide" ||
+      window.location.pathname === "/better-gateway/terminal"
+    )) {
       return false;
     }
 
-    // Check if already injected
-    if (document.getElementById("better-gateway-ide-nav")) {
+    // Check if BOTH nav items already exist — only then skip entirely.
+    // If only IDE exists (old inject.js ran first), we still need to add CLI.
+    var existingIdeNav = document.getElementById("better-gateway-ide-nav");
+    var existingCliNav = document.getElementById("better-gateway-cli-nav");
+    if (existingIdeNav && existingCliNav) {
       ideTabInjected = true;
       return false;
     }
@@ -460,7 +643,7 @@
       return false;
     }
 
-    // Intercept Chat link clicks when IDE is active
+    // Intercept Chat link clicks when IDE/CLI is active
     chatLink.addEventListener("click", function (e) {
       if (ideViewActive) {
         e.preventDefault();
@@ -473,8 +656,10 @@
     // This ensures the gateway's SPA routing works properly
     const allNavItems = document.querySelectorAll(".nav-item");
     allNavItems.forEach(function (navItem) {
-      // Skip Chat and IDE links (handled separately)
-      if (navItem === chatLink || navItem.id === "better-gateway-ide-nav") {
+      // Skip Chat, IDE, and CLI links (handled separately)
+      if (navItem === chatLink
+        || navItem.id === "better-gateway-ide-nav"
+        || navItem.id === "better-gateway-cli-nav") {
         return;
       }
       
@@ -486,18 +671,20 @@
       });
     });
 
-    // Create and insert IDE nav item after Chat
-    const ideNavItem = createIdeNavItem();
-    navItems.appendChild(ideNavItem);
-
-    ideTabInjected = true;
-    console.log("[BetterGateway] IDE nav item injected below Chat");
-
-    // Restore saved view mode after injection
-    if (currentViewMode !== 'chat') {
-      setTimeout(function () { setViewMode(currentViewMode); }, 0);
+    // Create and insert IDE nav item (if not already present)
+    if (!existingIdeNav) {
+      const ideNavItem = createIdeNavItem();
+      navItems.appendChild(ideNavItem);
     }
 
+    // Create and insert CLI nav item (if not already present)
+    if (!existingCliNav) {
+      const cliNavItem = createCliNavItem();
+      navItems.appendChild(cliNavItem);
+    }
+
+    ideTabInjected = true;
+    console.log("[BetterGateway] IDE + CLI nav items injected");
     return true;
   }
 

@@ -1378,6 +1378,15 @@ export function generateIdePage(config: Partial<IdePageConfig> = {}): string {
           }
         }
         
+        // Ctrl+L - Toggle chat sidebar (forward to parent frame)
+        // Ctrl only, NOT Cmd — Cmd+L is browser "focus URL bar"
+        if (e.ctrlKey && !e.metaKey && e.key === 'l') {
+          e.preventDefault();
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'toggleChat' }, '*');
+          }
+        }
+
         // Cmd/Ctrl+P - Focus file search / Quick open
         if (modKey && e.key === 'p') {
           e.preventDefault();

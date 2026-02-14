@@ -3,4 +3,3 @@ dist/
 *.log
 *.db
 .DS_Store
-PLAN.md

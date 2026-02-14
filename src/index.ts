@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { createFileApiHandler, DEFAULT_MAX_FILE_SIZE } from "./file-api.js";
 import { generateIdePage } from "./ide-page.js";
+import { generateTerminalPage } from "./terminal-page.js";
+import { createTerminalManager } from "./terminal-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -119,6 +121,7 @@ function generateLandingPage(config: PluginConfig, gatewayHost: string): string 
   <div class="feature">Reconnect interval: ${config.reconnectIntervalMs}ms</div>
   <div class="feature">File API for workspace access <span class="new">NEW</span></div>
   <div class="feature">Monaco-powered IDE <span class="new">NEW</span></div>
+  <div class="feature">Embedded terminal (xterm.js + PTY) <span class="new">NEW</span></div>
 
   <h2>Option 1: Bookmarklet</h2>
   <p>Drag this to your bookmarks bar, then click it when on the Gateway UI:</p>
@@ -146,6 +149,16 @@ fetch('/better-gateway/inject.js').then(r=>r.text()).then(eval);</pre>
     <li>Syntax highlighting for 30+ languages</li>
     <li>Multi-tab editing with Ctrl+S save</li>
     <li>Keyboard shortcuts (Ctrl+B sidebar, Ctrl+W close)</li>
+  </ul>
+
+  <h2>Terminal <span class="new">NEW</span></h2>
+  <p>Full interactive terminal in the browser:</p>
+  <p><a class="bookmarklet" href="/better-gateway/terminal">🖥 Open Terminal</a></p>
+  <ul style="margin: 16px 0; padding-left: 24px; color: #aaa;">
+    <li>Real PTY backend via node-pty</li>
+    <li>xterm.js with 256-color support</li>
+    <li>Resize, scroll, links, full interactivity</li>
+    <li>Keyboard shortcut: Ctrl+\` to toggle</li>
   </ul>
 
   <h2>File API <span class="new">NEW</span></h2>
@@ -256,6 +269,9 @@ export default {
       maxFileSize: config.maxFileSize,
     });
 
+    // Create terminal manager (PTY + SSE/POST bridge)
+    const terminalManager = createTerminalManager(api.logger, workspaceDir);
+
     // Register the main HTTP handler for /better-gateway/* routes
     api.registerHttpHandler(
       async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
@@ -288,6 +304,28 @@ export default {
           res.end(html);
           api.logger.debug("Served IDE page");
           return true;
+        }
+
+        // Serve the terminal page (exact match only)
+        if (pathname === "/better-gateway/terminal") {
+          const html = generateTerminalPage();
+          res.writeHead(200, {
+            "Content-Type": "text/html",
+            "Content-Length": Buffer.byteLength(html),
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
+          });
+          res.end(html);
+          api.logger.debug("Served terminal page");
+          return true;
+        }
+
+        // Terminal API sub-routes: /stream, /input, /resize
+        if (pathname.startsWith("/better-gateway/terminal/")) {
+          const subpath = pathname.slice("/better-gateway/terminal".length);
+          const handled = await terminalManager.handleRequest(req, res, subpath);
+          if (handled) return true;
         }
 
         // Serve the inject script
@@ -379,6 +417,9 @@ export default {
                 const headers: Record<string, string | number> = {
                   "Content-Type": contentType,
                   "Content-Length": Buffer.byteLength(body),
+                  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                  "Pragma": "no-cache",
+                  "Expires": "0",
                 };
 
                 res.writeHead(proxyRes.statusCode || 200, headers);
