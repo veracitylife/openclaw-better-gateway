@@ -3,15 +3,19 @@
  *
  * Spawns server-side PTY sessions via node-pty and bridges them
  * to the browser through WebSocket connections.
+ *
+ * All external types are defined locally so the module compiles without
+ * @types/ws or @types/node-pty being installed.
  */
 
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 
 // ---------------------------------------------------------------------------
-// Minimal interfaces — avoids hard dependency on @types/node-pty
+// Minimal interfaces — fully self-contained, no external @types needed
 // ---------------------------------------------------------------------------
 
+/** Subset of node-pty's IPty we actually use */
 interface IPty {
   onData(cb: (data: string) => void): { dispose(): void };
   onExit(cb: (e: { exitCode: number; signal?: number }) => void): { dispose(): void };
@@ -21,12 +25,39 @@ interface IPty {
   readonly pid: number;
 }
 
+/** The spawn function from node-pty */
 interface INodePty {
   spawn(
     file: string,
     args: string[],
     options: Record<string, unknown>,
   ): IPty;
+}
+
+/** Subset of ws.WebSocket we actually use */
+interface IWsSocket {
+  readonly readyState: number;
+  send(data: string | Buffer): void;
+  close(code?: number, reason?: string): void;
+  on(event: "message", cb: (data: Buffer | ArrayBuffer | Buffer[]) => void): this;
+  on(event: "close", cb: () => void): this;
+  on(event: "error", cb: (err: Error) => void): this;
+  on(event: string, cb: (...args: unknown[]) => void): this;
+}
+
+/** Subset of ws.WebSocketServer we actually use */
+interface IWsServer {
+  handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    callback: (client: IWsSocket) => void,
+  ): void;
+}
+
+/** Shape of the dynamically imported ws module */
+interface IWsModule {
+  WebSocketServer: new (opts: { noServer: true }) => IWsServer;
 }
 
 interface TerminalLogger {
@@ -37,63 +68,73 @@ interface TerminalLogger {
 }
 
 // ---------------------------------------------------------------------------
-// Cached dynamic imports (lazy-loaded so the plugin works even if deps are
-// missing — the rest of Better Gateway keeps running)
+// Cached dynamic imports — using string variables so TypeScript does NOT try
+// to resolve the module at compile time. This lets us compile cleanly even
+// when ws / node-pty aren't installed (or have no type declarations).
 // ---------------------------------------------------------------------------
 
 let _pty: INodePty | null = null;
 let _ptyPromise: Promise<boolean> | null = null;
 
-let _wsModule: typeof import("ws") | null = null;
-let _wsPromise: Promise<typeof import("ws")> | null = null;
+let _wsModule: IWsModule | null = null;
+let _wsPromise: Promise<IWsModule> | null = null;
+
+// String variables dodge TS module resolution for dynamic import()
+const WS_PKG: string = "ws";
+const PTY_PKG: string = "node-pty";
 
 function loadPty(logger: TerminalLogger): Promise<boolean> {
   if (_ptyPromise) return _ptyPromise;
-  _ptyPromise = import("node-pty").then(
-    (mod) => {
+  _ptyPromise = import(PTY_PKG).then(
+    (mod: Record<string, unknown>) => {
       _pty = (mod.default ?? mod) as unknown as INodePty;
       logger.info("Terminal: node-pty loaded");
       return true;
     },
     () => {
-      logger.warn("Terminal: node-pty not available — install it for terminal support");
+      logger.warn(
+        "Terminal: node-pty not available — install it for terminal support",
+      );
       return false;
     },
   );
   return _ptyPromise;
 }
 
-function loadWs(): Promise<typeof import("ws")> {
+function loadWs(logger: TerminalLogger): Promise<IWsModule> {
   if (_wsPromise) return _wsPromise;
-  _wsPromise = import("ws").then((mod) => {
-    _wsModule = mod;
-    return mod;
+  _wsPromise = import(WS_PKG).then((mod: Record<string, unknown>) => {
+    const wsmod = (mod.default ?? mod) as unknown as IWsModule;
+    _wsModule = wsmod;
+    return wsmod;
   });
+  _wsPromise.catch((err) =>
+    logger.error(`Terminal: failed to load ws — ${err}`),
+  );
   return _wsPromise;
 }
 
-// WebSocket readyState constants (avoid import dependency)
+// WebSocket readyState constants (avoids needing the class at all)
 const WS_OPEN = 1;
 
 // ---------------------------------------------------------------------------
 // Public factory
 // ---------------------------------------------------------------------------
 
-export function createTerminalManager(logger: TerminalLogger, workspaceDir: string) {
+export function createTerminalManager(
+  logger: TerminalLogger,
+  workspaceDir: string,
+) {
   let serverAttached = false;
 
   // Start loading both modules eagerly so they're warm by the time a
   // connection arrives.
   loadPty(logger);
-  loadWs().catch((err) =>
-    logger.error(`Terminal: failed to load ws module — ${err}`),
-  );
+  loadWs(logger);
 
   // ---- per-connection handler ------------------------------------------
 
-  async function handleConnection(
-    socket: import("ws").WebSocket,
-  ): Promise<void> {
+  async function handleConnection(socket: IWsSocket): Promise<void> {
     const available = await loadPty(logger);
     if (!available || !_pty) {
       socket.send(
@@ -212,15 +253,15 @@ export function createTerminalManager(logger: TerminalLogger, workspaceDir: stri
     if (serverAttached) return;
     serverAttached = true;
 
-    let ws: typeof import("ws");
+    let wsmod: IWsModule;
     try {
-      ws = await loadWs();
+      wsmod = await loadWs(logger);
     } catch (err) {
       logger.error(`Terminal: cannot load ws — ${err}`);
       return;
     }
 
-    const wss = new ws.WebSocketServer({ noServer: true });
+    const wss = new wsmod.WebSocketServer({ noServer: true });
 
     server.on(
       "upgrade",
