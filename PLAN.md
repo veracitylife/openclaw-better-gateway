@@ -65,10 +65,9 @@ Add an embedded terminal/CLI as a third nav tab (Chat → IDE → CLI) in the ga
 
 **Current:** `chat | ide | split(ide+chat)`
 
-**New modes:**
+**CLI view modes:**
 - `cli` — Terminal fullscreen
 - `split-cli` — Terminal left, Chat right
-- Triple split (IDE + Terminal + Chat) possible later, start simple
 
 **Nav behavior (matching IDE pattern):**
 - Click CLI → toggle split-cli / chat

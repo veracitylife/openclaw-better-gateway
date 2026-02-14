@@ -349,9 +349,10 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       window.eval(injectScript);
       
       const items = navItems.querySelectorAll(".nav-item");
-      expect(items.length).toBe(2);
+      expect(items.length).toBe(3);
       expect(items[0].getAttribute("href")).toBe("/chat");
       expect(items[1].getAttribute("href")).toBe("#ide");
+      expect(items[2].getAttribute("href")).toBe("#cli");
     });
 
     it.skip("should not inject on standalone IDE page", () => {
@@ -375,7 +376,7 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       
       window.eval(injectScript);
       
-      expect(consoleSpy).toHaveBeenCalledWith("[BetterGateway] IDE nav item injected below Chat");
+      expect(consoleSpy).toHaveBeenCalledWith("[BetterGateway] IDE + CLI nav items injected");
     });
 
     it("should create IDE iframe when view is toggled", () => {

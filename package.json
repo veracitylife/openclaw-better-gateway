@@ -36,8 +36,15 @@
     "openclaw.plugin.json",
     "README.md"
   ],
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.0",
     "jsdom": "^26.0.0",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"
