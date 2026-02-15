@@ -1029,6 +1029,8 @@
         .bg-chat-file-chip .chip-truncated { opacity: 0.6; font-size: 11px; }
         .bg-chat-file-content { display: none; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin: 4px 0 8px; font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; color: #e6edf3; }
         .bg-chat-file-content.visible { display: block; }
+        /* Prevent iOS Safari auto-zoom on textarea focus (triggers when font-size < 16px) */
+        main.content textarea { font-size: max(16px, 1em) !important; }
         /* Compose + header compact layout tweaks */
         .bg-chat-compose-has-send { position: relative; }
         .bg-chat-compose-has-send textarea { padding-right: 44px; }
