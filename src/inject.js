@@ -148,18 +148,18 @@
     item.addEventListener("click", function (e) {
       e.preventDefault();
       if (e.shiftKey) {
-        // Shift+click toggles IDE-only view
-        if (currentViewMode === 'ide') {
-          setViewMode('chat');
-        } else {
-          setViewMode('ide');
-        }
-      } else {
-        // Regular click toggles split view (Cursor-like experience)
+        // Shift+click toggles split view (IDE + chat)
         if (currentViewMode === 'split') {
           setViewMode('chat');
         } else {
           setViewMode('split');
+        }
+      } else {
+        // Regular click toggles IDE-only view (no chat sidebar by default)
+        if (currentViewMode === 'ide') {
+          setViewMode('chat');
+        } else {
+          setViewMode('ide');
         }
       }
     });
@@ -181,18 +181,18 @@
     item.addEventListener("click", function (e) {
       e.preventDefault();
       if (e.shiftKey) {
-        // Shift+click toggles CLI-only view
-        if (currentViewMode === 'cli') {
-          setViewMode('chat');
-        } else {
-          setViewMode('cli');
-        }
-      } else {
-        // Regular click toggles split-cli view (terminal + chat)
+        // Shift+click toggles split-cli view (terminal + chat)
         if (currentViewMode === 'split-cli') {
           setViewMode('chat');
         } else {
           setViewMode('split-cli');
+        }
+      } else {
+        // Regular click toggles CLI-only view (no chat sidebar by default)
+        if (currentViewMode === 'cli') {
+          setViewMode('chat');
+        } else {
+          setViewMode('cli');
         }
       }
     });
