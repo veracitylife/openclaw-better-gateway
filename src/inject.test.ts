@@ -394,12 +394,12 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       expect(ideFrame?.getAttribute("src")).toContain("/better-gateway/ide");
     });
 
-    it("should show split view (both main and iframe) when IDE nav is clicked", () => {
+    it("should show split view (both main and iframe) when IDE nav is Shift+clicked", () => {
       const { main } = createGatewaySidebar();
       window.eval(injectScript);
       
       const ideNav = window.document.getElementById("better-gateway-ide-nav");
-      ideNav?.click();
+      ideNav?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }));
       
       // Split view: both main and iframe are visible
       expect(main.style.display).not.toBe("none");
@@ -414,12 +414,12 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       
       const ideNav = window.document.getElementById("better-gateway-ide-nav");
       
-      // Switch to split view
-      ideNav?.click();
+      // Switch to split view via Shift+click
+      ideNav?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }));
       expect(main.style.display).not.toBe("none");
       
-      // Switch back to Chat
-      ideNav?.click();
+      // Switch back to Chat via Shift+click again
+      ideNav?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }));
       expect(main.style.display).toBe("");
       const ideFrame = window.document.getElementById("better-gateway-ide-frame");
       expect(ideFrame?.style.display).toBe("none");
@@ -456,13 +456,13 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       expect(chatLink.classList.contains("active")).toBe(true);
       expect(ideNav?.classList.contains("active")).toBe(false);
       
-      // Switch to split view - both should be active
-      ideNav?.click();
+      // Switch to split view via Shift+click - both should be active
+      ideNav?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }));
       expect(chatLink.classList.contains("active")).toBe(true);
       expect(ideNav?.classList.contains("active")).toBe(true);
       
-      // Switch back to Chat
-      ideNav?.click();
+      // Switch back to Chat via Shift+click again
+      ideNav?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }));
       expect(chatLink.classList.contains("active")).toBe(true);
       expect(ideNav?.classList.contains("active")).toBe(false);
     });
@@ -472,7 +472,8 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       window.eval(injectScript);
 
       const ideNav = window.document.getElementById("better-gateway-ide-nav");
-      ideNav?.click(); // split
+      // Enter split view via Shift+click
+      ideNav?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }));
 
       const toggle = window.document.getElementById("better-gateway-chat-toggle") as HTMLButtonElement | null;
       expect(toggle).not.toBeNull();
@@ -489,22 +490,25 @@ describe("inject.js - WebSocket auto-reconnect", () => {
       window.eval(injectScript);
 
       const ideNav = window.document.getElementById("better-gateway-ide-nav");
-      ideNav?.click(); // split mode
+      // Regular click -> IDE-only (no chat)
+      ideNav?.click();
+      expect(main.style.display).toBe("none");
+
+      // Ctrl+L should toggle to split (show chat)
+      window.dispatchEvent(new window.KeyboardEvent("keydown", {
+        key: "l",
+        ctrlKey: true,
+        bubbles: true,
+      }));
       expect(main.style.display).not.toBe("none");
 
+      // Ctrl+L again should go back to IDE-only
       window.dispatchEvent(new window.KeyboardEvent("keydown", {
         key: "l",
         ctrlKey: true,
         bubbles: true,
       }));
       expect(main.style.display).toBe("none");
-
-      window.dispatchEvent(new window.KeyboardEvent("keydown", {
-        key: "l",
-        ctrlKey: true,
-        bubbles: true,
-      }));
-      expect(main.style.display).not.toBe("none");
     });
 
 
