@@ -134,6 +134,31 @@
     </svg>
   `;
 
+  // SVG icon for send button (up arrow)
+  const SEND_ICON_SVG = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="19" x2="12" y2="5"></line>
+      <polyline points="5 12 12 5 19 12"></polyline>
+    </svg>
+  `;
+
+  // SVG icon for stop button (filled square)
+  const STOP_ICON_SVG = `
+    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <rect x="5" y="5" width="14" height="14" rx="2" ry="2"></rect>
+    </svg>
+  `;
+
+  // SVG icon for new session (document with plus)
+  const NEW_SESSION_ICON_SVG = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+      <line x1="12" y1="18" x2="12" y2="12"></line>
+      <line x1="9" y1="15" x2="15" y2="15"></line>
+    </svg>
+  `;
+
   function createIdeNavItem() {
     const item = document.createElement("a");
     item.id = "better-gateway-ide-nav";
@@ -1004,6 +1029,43 @@
         .bg-chat-file-chip .chip-truncated { opacity: 0.6; font-size: 11px; }
         .bg-chat-file-content { display: none; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin: 4px 0 8px; font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; color: #e6edf3; }
         .bg-chat-file-content.visible { display: block; }
+        /* Prevent iOS Safari auto-zoom on textarea focus (triggers when font-size < 16px) */
+        main.content textarea { font-size: max(16px, 1em) !important; }
+        /* Compose + header compact layout tweaks */
+        .bg-chat-compose-has-send { position: relative; }
+        .bg-chat-compose-has-send textarea { padding-right: 44px; }
+        .bg-chat-send-btn {
+          position: absolute;
+          right: 6px;
+          bottom: 6px;
+          margin: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 6px;
+          min-width: 32px;
+          min-height: 32px;
+        }
+        .bg-send-icon svg { width: 16px; height: 16px; display: block; }
+        .bg-send-label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+        }
+        .bg-new-session-icon { display: inline-flex; align-items: center; }
+        .bg-new-session-icon svg { width: 16px; height: 16px; display: block; }
+        .bg-new-session-label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+        }
+        #better-gateway-ide-frame, #better-gateway-cli-frame { min-height: 0; }
       `;
       document.head.appendChild(style);
     }
@@ -1114,8 +1176,194 @@
     }
   }
 
+  function enhanceHeaderLayout() {
+    try {
+      if (typeof document === "undefined") return;
+
+      // Bail early if we already injected the header proxy button.
+      if (document.getElementById("bg-header-new-session-btn")) return;
+
+      // Prefer the chat controls bar (session selector + refresh + thinking + focus).
+      const chatControls = document.querySelector('.chat-controls');
+      const focusButton = chatControls
+        ? chatControls.querySelector('button[title*="focus mode" i], button[aria-label*="focus mode" i]')
+        : null;
+
+      if (!chatControls || !focusButton) return;
+
+      // The gateway renders .chat-compose__actions with two buttons:
+      //   [0] abortButton: "New session" | "Stop"  (Lit manages the text)
+      //   [1] sendButton:  "Send" | "Queue" + <kbd>
+      // We do NOT move the original button — that breaks Lit's text-node binding.
+      // Instead we create a new proxy button in the header.
+      var actionsDiv = document.querySelector("main.content .chat-compose__actions");
+      if (!actionsDiv) return;
+      var abortButton = actionsDiv.querySelectorAll("button")[0];
+      if (!abortButton) return;
+
+      // Create a new proxy "New session" button for the header.
+      var headerBtn = document.createElement("button");
+      headerBtn.id = "bg-header-new-session-btn";
+      headerBtn.type = "button";
+      headerBtn.className = "btn btn--sm btn--icon";
+      headerBtn.setAttribute("aria-label", "New session");
+      headerBtn.title = "New session";
+
+      var nsIconSpan = document.createElement("span");
+      nsIconSpan.className = "bg-new-session-icon";
+      nsIconSpan.setAttribute("aria-hidden", "true");
+      nsIconSpan.innerHTML = NEW_SESSION_ICON_SVG;
+
+      var nsLabelSpan = document.createElement("span");
+      nsLabelSpan.className = "bg-new-session-label";
+      nsLabelSpan.textContent = "New session";
+
+      headerBtn.appendChild(nsIconSpan);
+      headerBtn.appendChild(nsLabelSpan);
+
+      // Only fire when NOT streaming (abort button text is "New session", not "Stop").
+      headerBtn.addEventListener("click", function () {
+        var actions = document.querySelector("main.content .chat-compose__actions");
+        var abort = actions ? actions.querySelectorAll("button")[0] : null;
+        if (abort && !/stop/i.test((abort.textContent || "").trim())) {
+          abort.click();
+        }
+      });
+
+      chatControls.insertBefore(headerBtn, focusButton.nextSibling);
+    } catch (_error) {
+      // Non-fatal; header tweaks are best-effort only.
+    }
+  }
+
+  function enhanceComposeLayout() {
+    if (typeof document === "undefined") return;
+
+    var main = document.querySelector("main.content");
+    if (!main) return;
+
+    // Locate the chat compose field container.
+    var formTextarea = main.querySelector("form textarea");
+    var field = main.querySelector(".chat-compose") ||
+      main.querySelector(".chat-compose__field") ||
+      (formTextarea ? formTextarea.parentElement : null);
+    if (!field || field.dataset.bgComposeEnhanced === "true") return;
+
+    var textarea = field.querySelector("textarea") || main.querySelector("textarea");
+    if (!textarea) return;
+
+    // The gateway renders .chat-compose__actions with two Lit-managed buttons:
+    //   [0] abortButton: "New session" | "Stop"  — text changes when streaming starts/ends
+    //   [1] sendButton:  "Send" | "Queue" (+ <kbd>↵</kbd>) — Lit may also update text
+    // We must NOT move or clear these buttons — that severs Lit's DOM text-node bindings.
+    // Instead we hide the whole actions div and create our own proxy button inside the field.
+    var actionsDiv = field.querySelector(".chat-compose__actions");
+    if (!actionsDiv) return;
+
+    var buttons = actionsDiv.querySelectorAll("button");
+    var abortButton = buttons[0]; // "New session" | "Stop"
+    var sendButton  = buttons[1]; // "Send" | "Queue"
+    if (!sendButton) return;
+
+    // Guard: if our proxy already lives in this field, just mark enhanced and bail.
+    if (field.querySelector("#bg-compose-send-stop-btn")) {
+      field.dataset.bgComposeEnhanced = "true";
+      return;
+    }
+
+    // Mark enhanced before any async work.
+    field.dataset.bgComposeEnhanced = "true";
+
+    // Hide the original actions bar entirely.
+    actionsDiv.style.display = "none";
+
+    // Find the field label (wraps the textarea) — proxy button goes here.
+    var fieldLabel =
+      field.querySelector(".chat-compose__field") ||
+      field.querySelector("label.field") ||
+      field;
+
+    if (fieldLabel && !fieldLabel.classList.contains("bg-chat-compose-has-send")) {
+      fieldLabel.classList.add("bg-chat-compose-has-send");
+    }
+
+    // --- Build the proxy Send / Stop button ---
+    var proxyBtn = document.createElement("button");
+    proxyBtn.type = "button";
+    proxyBtn.id = "bg-compose-send-stop-btn";
+    proxyBtn.className = "btn btn--primary btn--icon bg-chat-send-btn";
+    proxyBtn.setAttribute("aria-label", "Send message");
+    proxyBtn.title = "Send message";
+
+    var sendIconSpan = document.createElement("span");
+    sendIconSpan.className = "bg-send-icon";
+    sendIconSpan.setAttribute("aria-hidden", "true");
+    sendIconSpan.innerHTML = SEND_ICON_SVG;
+
+    var proxyLabelSpan = document.createElement("span");
+    proxyLabelSpan.className = "bg-send-label";
+    proxyLabelSpan.textContent = "Send message";
+
+    proxyBtn.appendChild(sendIconSpan);
+    proxyBtn.appendChild(proxyLabelSpan);
+
+    try {
+      if (fieldLabel) fieldLabel.appendChild(proxyBtn);
+    } catch (_e) {}
+
+    // --- State machine: idle (Send) ↔ streaming (Stop) ---
+    var isStreaming = false;
+
+    function updateProxyState() {
+      // Lit updates abortButton's text between "New session" and "Stop".
+      // We use that as the streaming signal.
+      var abortText = abortButton
+        ? (abortButton.textContent || "").replace(/\s+/g, " ").trim()
+        : "";
+      isStreaming = /^stop$/i.test(abortText);
+
+      if (isStreaming) {
+        sendIconSpan.innerHTML = STOP_ICON_SVG;
+        proxyBtn.setAttribute("aria-label", "Stop response");
+        proxyBtn.title = "Stop response";
+        proxyBtn.disabled = abortButton ? abortButton.disabled : false;
+      } else {
+        sendIconSpan.innerHTML = SEND_ICON_SVG;
+        proxyBtn.setAttribute("aria-label", "Send message");
+        proxyBtn.title = "Send message";
+        proxyBtn.disabled = sendButton.disabled;
+      }
+    }
+
+    // Proxy click: delegate to the appropriate hidden gateway button.
+    proxyBtn.addEventListener("click", function () {
+      if (isStreaming) {
+        if (abortButton && !abortButton.disabled) abortButton.click();
+      } else {
+        if (sendButton && !sendButton.disabled) sendButton.click();
+      }
+    });
+
+    // Watch abortButton for "New session" ↔ "Stop" text changes (streaming signal).
+    if (abortButton) {
+      new MutationObserver(updateProxyState)
+        .observe(abortButton, { childList: true, characterData: true, subtree: true });
+    }
+
+    // Mirror the send button's disabled state onto the proxy (e.g. when disconnected).
+    new MutationObserver(function () {
+      if (!isStreaming) proxyBtn.disabled = sendButton.disabled;
+    }).observe(sendButton, { attributes: true, attributeFilter: ["disabled"] });
+
+    // Set initial state.
+    updateProxyState();
+  }
+
+
   function startChatComposerEnhancer() {
     fetchWorkspaceFiles();
+    enhanceHeaderLayout();
+    enhanceComposeLayout();
     attachChatComposerEnhancements();
 
     // Window-level capture handler fires before any framework handlers
@@ -1150,6 +1398,8 @@
     if (!document.body) return;
     const observer = new MutationObserver(function () {
       try {
+        enhanceHeaderLayout();
+        enhanceComposeLayout();
         attachChatComposerEnhancements();
         transformFileBlocksInChat();
       } catch (_error) {}

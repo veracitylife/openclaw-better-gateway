@@ -512,6 +512,150 @@ describe("inject.js - WebSocket auto-reconnect", () => {
     });
 
 
+  describe("compose layout: Send/Stop proxy button", () => {
+    /**
+     * Creates the DOM structure that mirrors what the OpenClaw gateway
+     * actually renders for the chat compose area:
+     *
+     *   <main class="content">
+     *     <section class="chat-compose">
+     *       <label class="field chat-compose__field">
+     *         <textarea></textarea>
+     *       </label>
+     *       <div class="chat-compose__actions">
+     *         <button class="btn">New session</button>   ← abortButton (Lit: "New session"|"Stop")
+     *         <button class="btn primary">Send<kbd>↵</kbd></button>  ← sendButton
+     *       </div>
+     *     </section>
+     *   </main>
+     */
+    function createGatewayCompose() {
+      const main = window.document.createElement("main");
+      main.className = "content";
+
+      const section = window.document.createElement("section");
+      section.className = "chat-compose";
+
+      const fieldLabel = window.document.createElement("label");
+      fieldLabel.className = "field chat-compose__field";
+      const textarea = window.document.createElement("textarea");
+      fieldLabel.appendChild(textarea);
+
+      const actionsDiv = window.document.createElement("div");
+      actionsDiv.className = "chat-compose__actions";
+
+      const abortBtn = window.document.createElement("button");
+      abortBtn.className = "btn";
+      abortBtn.textContent = "New session";
+
+      const sendBtn = window.document.createElement("button");
+      sendBtn.className = "btn primary";
+      sendBtn.textContent = "Send";
+      const kbd = window.document.createElement("kbd");
+      kbd.textContent = "↵";
+      sendBtn.appendChild(kbd);
+
+      actionsDiv.appendChild(abortBtn);
+      actionsDiv.appendChild(sendBtn);
+      section.appendChild(fieldLabel);
+      section.appendChild(actionsDiv);
+      main.appendChild(section);
+      window.document.body.appendChild(main);
+
+      return { main, section, fieldLabel, textarea, actionsDiv, abortBtn, sendBtn };
+    }
+
+    it("should hide the original actions bar and inject a proxy send button", () => {
+      const { actionsDiv, fieldLabel } = createGatewayCompose();
+      window.eval(injectScript);
+
+      // Original actions bar should be hidden.
+      expect(actionsDiv.style.display).toBe("none");
+      // Proxy button should exist inside the field label.
+      const proxy = fieldLabel.querySelector("#bg-compose-send-stop-btn");
+      expect(proxy).not.toBeNull();
+      expect((proxy as HTMLElement).getAttribute("aria-label")).toBe("Send message");
+    });
+
+    it("proxy button shows Send icon in idle state and Stop icon when abortButton says Stop", async () => {
+      const { abortBtn, fieldLabel } = createGatewayCompose();
+      window.eval(injectScript);
+      await new Promise((r) => setTimeout(r, 0));
+
+      const proxy = fieldLabel.querySelector("#bg-compose-send-stop-btn") as HTMLElement;
+      expect(proxy).not.toBeNull();
+
+      // Initially idle → aria-label "Send message".
+      expect(proxy.getAttribute("aria-label")).toBe("Send message");
+
+      // Simulate Lit switching the abort button to "Stop" (streaming started).
+      // MutationObserver fires automatically on textContent change in JSDOM.
+      abortBtn.textContent = "Stop";
+      await new Promise((r) => setTimeout(r, 0));
+      expect(proxy.getAttribute("aria-label")).toBe("Stop response");
+
+      // Simulate Lit reverting abort button to "New session" (streaming ended).
+      abortBtn.textContent = "New session";
+      await new Promise((r) => setTimeout(r, 0));
+      expect(proxy.getAttribute("aria-label")).toBe("Send message");
+    });
+
+    it("proxy button click delegates to sendButton when idle", () => {
+      const { sendBtn, fieldLabel } = createGatewayCompose();
+      let sendClicked = false;
+      sendBtn.addEventListener("click", () => { sendClicked = true; });
+
+      window.eval(injectScript);
+
+      const proxy = fieldLabel.querySelector("#bg-compose-send-stop-btn") as HTMLElement;
+      proxy?.click();
+      expect(sendClicked).toBe(true);
+    });
+
+    it("proxy button click delegates to abortButton when streaming", async () => {
+      const { abortBtn, fieldLabel } = createGatewayCompose();
+      let abortClicked = false;
+      abortBtn.addEventListener("click", () => { abortClicked = true; });
+
+      window.eval(injectScript);
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Simulate streaming start; MutationObserver fires automatically.
+      abortBtn.textContent = "Stop";
+      await new Promise((r) => setTimeout(r, 0));
+
+      const proxy = fieldLabel.querySelector("#bg-compose-send-stop-btn") as HTMLElement;
+      proxy?.click();
+      expect(abortClicked).toBe(true);
+    });
+
+    it("should not double-enhance if called again on the same field", () => {
+      const { fieldLabel } = createGatewayCompose();
+      window.eval(injectScript);
+      window.eval(injectScript);  // second run after MutationObserver fires
+
+      const proxies = fieldLabel.querySelectorAll("#bg-compose-send-stop-btn");
+      expect(proxies.length).toBe(1);
+    });
+
+    it("should inject New Session proxy button into chat-controls header", () => {
+      // Add a minimal chat-controls bar with a focus button.
+      const controls = window.document.createElement("div");
+      controls.className = "chat-controls";
+      const focusBtn = window.document.createElement("button");
+      focusBtn.title = "Focus mode";
+      controls.appendChild(focusBtn);
+      window.document.body.appendChild(controls);
+
+      createGatewayCompose();
+      window.eval(injectScript);
+
+      const headerBtn = window.document.getElementById("bg-header-new-session-btn");
+      expect(headerBtn).not.toBeNull();
+      expect(headerBtn?.getAttribute("aria-label")).toBe("New session");
+    });
+  });
+
   describe("sidebar chat @file mentions", () => {
     function createChatComposer() {
       const main = window.document.createElement("main");
