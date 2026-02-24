@@ -1,6 +1,6 @@
 {
   "name": "@thisisjeron/openclaw-better-gateway",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "OpenClaw plugin that enhances the gateway UI with auto-reconnect and connection monitoring",
   "type": "module",
   "main": "dist/index.js",
