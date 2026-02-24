@@ -6,6 +6,9 @@
   const config = window.__BETTER_GATEWAY_CONFIG__ || {
     reconnectIntervalMs: 3000,
     maxReconnectAttempts: 10,
+    autoReconnectOnGap: true,
+    autoReconnectOnVisibility: true,
+    visibilityReconnectThresholdMs: 30000,
   };
 
   let reconnectAttempts = 0;
@@ -14,6 +17,9 @@
   let activeConnections = new Set();
   let currentState = "connected";
   let ideTabInjected = false;
+  let hiddenSince = null;
+  let pendingForcedReconnect = false;
+  let lastConnectionArgs = null;
 
   function createStatusIndicator() {
     if (statusIndicator) return statusIndicator;
@@ -1407,10 +1413,29 @@
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  function closeAllAndReconnect() {
+    if (!lastConnectionArgs) return;
+    updateStatus("reconnecting", "Reconnecting\u2026");
+    if (activeConnections.size > 0) {
+      pendingForcedReconnect = true;
+      activeConnections.forEach(function (ws) { ws.close(); });
+    } else {
+      var args = lastConnectionArgs;
+      setTimeout(function () {
+        try {
+          new window.WebSocket(args.url, args.protocols);
+        } catch (e) {
+          console.error("[BetterGateway] Reconnection failed:", e);
+        }
+      }, config.reconnectIntervalMs);
+    }
+  }
+
   function wrapWebSocket(OriginalWebSocket) {
     function BetterWebSocket(url, protocols) {
       const ws = new OriginalWebSocket(url, protocols);
       const wrappedWs = ws;
+      lastConnectionArgs = { url, protocols };
 
       activeConnections.add(wrappedWs);
 
@@ -1419,8 +1444,30 @@
         updateStatus("connected", "Connected");
       });
 
+      ws.addEventListener("message", function (event) {
+        if (config.autoReconnectOnGap && typeof event.data === "string"
+            && event.data.includes("event gap detected")) {
+          console.warn("[BetterGateway] Event gap detected, forcing reconnect");
+          closeAllAndReconnect();
+        }
+      });
+
       ws.addEventListener("close", function (event) {
         activeConnections.delete(wrappedWs);
+
+        if (pendingForcedReconnect) {
+          pendingForcedReconnect = false;
+          reconnectAttempts = 0;
+          updateStatus("reconnecting", "Reconnecting\u2026");
+          setTimeout(function () {
+            try {
+              new BetterWebSocket(url, protocols);
+            } catch (e) {
+              console.error("[BetterGateway] Forced reconnection failed:", e);
+            }
+          }, config.reconnectIntervalMs);
+          return;
+        }
 
         if (!event.wasClean && reconnectAttempts < config.maxReconnectAttempts) {
           reconnectAttempts++;
@@ -1510,6 +1557,21 @@
 
   window.addEventListener("offline", function () {
     updateStatus("disconnected", "Offline");
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      hiddenSince = Date.now();
+    } else if (config.autoReconnectOnVisibility && hiddenSince !== null) {
+      var away = Date.now() - hiddenSince;
+      hiddenSince = null;
+      if (away >= config.visibilityReconnectThresholdMs) {
+        console.log("[BetterGateway] Tab was hidden for " + Math.round(away / 1000) + "s, forcing reconnect");
+        closeAllAndReconnect();
+      }
+    } else {
+      hiddenSince = null;
+    }
   });
 
   window.__BETTER_GATEWAY_INJECT_VERSION__ = INJECT_VERSION;
